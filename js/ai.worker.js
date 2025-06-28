@@ -105,42 +105,104 @@ function checkPattern(board, r, c, dir, player, length, openStart = null, openEn
     return true;
 }
 
+// New helper function to score a single potential move heuristically
+function scoreMoveHeuristically(board, x, y, player) {
+    let score = 0;
+    const opponent = (player === PLAYER_BLACK) ? PLAYER_WHITE : PLAYER_BLACK;
+
+    // Temporarily place the stone to check patterns formed
+    board[y][x] = player; // Make the move
+
+    // 1. Check for immediate win for 'player'
+    if (checkWinForPlayer(board, player)) {
+        board[y][x] = EMPTY; // Revert
+        return PATTERN_SCORES.FIVE_IN_A_ROW * 10; // Very high score for immediate win
+    }
+
+    // 2. Check if this move blocks an immediate win for the opponent
+    // To do this, see if opponent *would have won* if they played at x,y
+    board[y][x] = opponent; // Simulate opponent playing here instead
+    if (checkWinForPlayer(board, opponent)) {
+        // If opponent would have won here, then 'player' playing here is a critical block.
+        score += PATTERN_SCORES.LIVE_FOUR * 2; // High score for blocking opponent's win
+    }
+
+    // Revert to player's stone for further offensive checks (if any)
+    board[y][x] = player;
+
+    // 3. Basic offensive heuristic: count adjacent same-color stones (simplified)
+    // This encourages clustering but is not a full pattern analysis.
+    const directions = [{dr:0,dc:1},{dr:1,dc:0},{dr:1,dc:1},{dr:1,dc:-1}];
+    for(const dir of directions) {
+        for(let i = 1; i < 3; i++) { // Check 1-2 steps in each of 8 directions
+            if (isInBounds(x + i * dir.dc, y + i * dir.dr) && board[y + i * dir.dr][x + i * dir.dc] === player) score += 30; else break;
+        }
+         for(let i = 1; i < 3; i++) {
+            if (isInBounds(x - i * dir.dc, y - i * dir.dr) && board[y - i * dir.dr][x - i * dir.dc] === player) score += 30; else break;
+        }
+    }
+    // (Could add more sophisticated local pattern checks here if needed, e.g., forming live threes)
+
+    board[y][x] = EMPTY; // IMPORTANT: Always revert the board to original state before returning
+    return score;
+}
+
+
 function findBestMove(board, depth, alpha, beta, maximizingPlayer, aiPlayer = PLAYER_WHITE) {
     if (depth === 0 || isGameOver(board, aiPlayer)) {
         return { score: evaluateBoard(board, aiPlayer), move: null };
     }
-    const possibleMoves = getPossibleMoves(board);
+
+    let possibleMoves = getPossibleMoves(board);
     if (possibleMoves.length === 0) {
         return { score: evaluateBoard(board, aiPlayer), move: null };
     }
-    let bestMove = null;
+
+    // Sort possible moves to improve alpha-beta pruning efficiency
+    if (depth >= 1 && possibleMoves.length > 1) { // Sort if there's depth and choice
+        const currentPlayerForSort = maximizingPlayer ? aiPlayer : ((aiPlayer === PLAYER_BLACK) ? PLAYER_WHITE : PLAYER_BLACK);
+        const scoredMoves = possibleMoves.map(move => {
+            // Score is based on the immediate impact of the move by currentPlayerForSort
+            const score = scoreMoveHeuristically(board, move.x, move.y, currentPlayerForSort);
+            return { move, score };
+        });
+        scoredMoves.sort((a, b) => b.score - a.score); // Higher scores first
+        possibleMoves = scoredMoves.map(sm => sm.move);
+    }
+
+    let bestMoveForThisNode = null; // Tracks the best move found at this particular node/depth
+
     if (maximizingPlayer) {
         let maxEval = -Infinity;
         for (const move of possibleMoves) {
-            const tempBoard = makeTemporaryMove(board, move.x, move.y, aiPlayer);
-            const currentEval = findBestMove(tempBoard, depth - 1, alpha, beta, false, aiPlayer).score;
+            board[move.y][move.x] = aiPlayer; // Make move on the shared board
+            const currentEval = findBestMove(board, depth - 1, alpha, beta, false, aiPlayer).score;
+            board[move.y][move.x] = EMPTY; // Undo move
+
             if (currentEval > maxEval) {
                 maxEval = currentEval;
-                bestMove = move;
+                bestMoveForThisNode = move;
             }
             alpha = Math.max(alpha, currentEval);
             if (beta <= alpha) break;
         }
-        return { score: maxEval, move: bestMove };
-    } else {
+        return { score: maxEval, move: bestMoveForThisNode };
+    } else { // Minimizing player
         let minEval = Infinity;
         const opponentPlayer = (aiPlayer === PLAYER_BLACK) ? PLAYER_WHITE : PLAYER_BLACK;
         for (const move of possibleMoves) {
-            const tempBoard = makeTemporaryMove(board, move.x, move.y, opponentPlayer);
-            const currentEval = findBestMove(tempBoard, depth - 1, alpha, beta, true, aiPlayer).score;
+            board[move.y][move.x] = opponentPlayer; // Make move on the shared board
+            const currentEval = findBestMove(board, depth - 1, alpha, beta, true, aiPlayer).score;
+            board[move.y][move.x] = EMPTY; // Undo move
+
             if (currentEval < minEval) {
                 minEval = currentEval;
-                bestMove = move;
+                bestMoveForThisNode = move; // Though for min player, this move is less critical to return up
             }
             beta = Math.min(beta, currentEval);
             if (beta <= alpha) break;
         }
-        return { score: minEval, move: bestMove };
+        return { score: minEval, move: bestMoveForThisNode };
     }
 }
 
@@ -181,40 +243,53 @@ function checkWinForPlayer(currentBoard, player) {
 
 function getPossibleMoves(board) {
     const moves = [];
-    const occupiedCells = [];
+    let occupiedCount = 0;
+    const candidateMap = Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill(false));
+
     for (let r = 0; r < BOARD_SIZE; r++) {
         for (let c = 0; c < BOARD_SIZE; c++) {
-            if (board[r][c] !== EMPTY) occupiedCells.push({ r, c });
+            if (board[r][c] !== EMPTY) {
+                occupiedCount++;
+            }
         }
     }
-    if (occupiedCells.length === 0) {
+
+    if (occupiedCount === 0) {
         moves.push({ x: Math.floor(BOARD_SIZE / 2), y: Math.floor(BOARD_SIZE / 2) });
         return moves;
     }
-    const candidates = new Set();
-    const range = 2;
-    occupiedCells.forEach(cell => {
-        for (let dr = -range; dr <= range; dr++) {
-            for (let dc = -range; dc <= range; dc++) {
-                if (dr === 0 && dc === 0) continue;
-                const r = cell.r + dr;
-                const c = cell.c + dc;
-                if (isInBounds(c, r) && board[r][c] === EMPTY) candidates.add(`${c}-${r}`);
+
+    const range = 1; // Consider only adjacent cells (range 1) for higher performance. Can be increased to 2 if needed.
+
+    for (let r = 0; r < BOARD_SIZE; r++) {
+        for (let c = 0; c < BOARD_SIZE; c++) {
+            if (board[r][c] !== EMPTY) { // For each existing stone
+                for (let dr = -range; dr <= range; dr++) {
+                    for (let dc = -range; dc <= range; dc++) {
+                        if (dr === 0 && dc === 0) continue;
+                        const nr = r + dr;
+                        const nc = c + dc;
+                        if (isInBounds(nc, nr) && board[nr][nc] === EMPTY && !candidateMap[nr][nc]) {
+                            candidateMap[nr][nc] = true;
+                            moves.push({ x: nc, y: nr });
+                        }
+                    }
+                }
             }
         }
-    });
-    if (candidates.size === 0 && occupiedCells.length > 0 && occupiedCells.length < BOARD_SIZE * BOARD_SIZE) {
-        for (let r = 0; r < BOARD_SIZE; r++) {
-            for (let c = 0; c < BOARD_SIZE; c++) {
-                if (board[r][c] === EMPTY) moves.push({ x: c, y: r });
-            }
-        }
-        return moves;
     }
-    candidates.forEach(str => {
-        const [x, y] = str.split('-').map(Number);
-        moves.push({ x, y });
-    });
+
+    // Fallback if no moves are found adjacent to existing stones (e.g. board is nearly full with isolated empty spots)
+    // This also handles the case where the board is full and occupiedCount == BOARD_SIZE * BOARD_SIZE, returning an empty moves list.
+    if (moves.length === 0 && occupiedCount < BOARD_SIZE * BOARD_SIZE) {
+        for (let r_fb = 0; r_fb < BOARD_SIZE; r_fb++) {
+            for (let c_fb = 0; c_fb < BOARD_SIZE; c_fb++) {
+                if (board[r_fb][c_fb] === EMPTY) {
+                    moves.push({ x: c_fb, y: r_fb });
+                }
+            }
+        }
+    }
     return moves;
 }
 

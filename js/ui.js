@@ -4,9 +4,13 @@
 let canvas, ctx;
 let messageEl; // For the inline game message
 
-// Modal elements
-let messageModal, modalMessageText, modalCloseBtn;
-let confirmModal, confirmModalText, confirmModalYesBtn, confirmModalNoBtn;
+// Canvas-based Modal state
+let isModalVisible = false;
+let modalType = null; // 'message' or 'confirm'
+let modalMessage = "";
+let modalOnYes = null;
+let modalOnNo = null;
+let modalButtons = []; // Array of {text, x, y, width, height, action}
 
 // Dynamic drawing parameters, will be updated by resizeCanvasInternal
 let currentCellSize = 30; // Default, will be recalculated
@@ -27,20 +31,11 @@ function initUIInternal() {
     ctx = canvas.getContext('2d');
     messageEl = document.getElementById('game-message'); // From index.html
 
-    // Initialize Modal elements
-    messageModal = document.getElementById('message-modal');
-    modalMessageText = document.getElementById('modal-message-text');
-    modalCloseBtn = document.getElementById('modal-close-btn');
-
-    confirmModal = document.getElementById('confirm-modal');
-    confirmModalText = document.getElementById('confirm-modal-text');
-    confirmModalYesBtn = document.getElementById('confirm-modal-yes-btn');
-    confirmModalNoBtn = document.getElementById('confirm-modal-no-btn');
-
     // Initial canvas setup is triggered by the first call to resizeCanvasInternal
     resizeCanvasInternal(); 
 
     // Event listeners
+    // Note: handleBoardClickInternal will now also need to check for modal clicks
     canvas.addEventListener('click', handleBoardClickInternal);
     // Add touch support for mobile devices
     canvas.addEventListener('touchend', handleBoardClickInternal, { passive: false });
@@ -48,63 +43,42 @@ function initUIInternal() {
 
     window.addEventListener('resize', resizeCanvasInternal); // Make canvas responsive
 
-    // Modal close button listener (for the general message modal)
-    if (modalCloseBtn) {
-        modalCloseBtn.addEventListener('click', () => {
-            if (messageModal) messageModal.classList.remove('active');
-        });
-    }
-
-    console.log("UI Initialized (internal). Canvas and Modals ready, responsive sizing active.");
+    console.log("UI Initialized (internal). Canvas ready, responsive sizing active.");
 }
 
 
-// --- Modal Control Functions ---
+// --- Canvas Modal Control Functions ---
 function showMessageModalInternal(message) {
-    if (modalMessageText && messageModal) {
-        modalMessageText.textContent = message;
-        messageModal.classList.add('active');
-    } else {
-        console.warn("Message modal elements not found. Falling back to alert.");
-        alert(message); // Fallback
-    }
+    isModalVisible = true;
+    modalType = 'message';
+    modalMessage = message;
+    modalButtons = []; // Will be populated by drawModalInternal
+    modalOnYes = null; // Not used for message modal
+    modalOnNo = null;  // Not used for message modal
+    console.log("UI: Showing canvas message modal:", message);
+    drawGameInternal(); // Redraw to show modal
 }
 
-// This will replace the old showSmartUndoModalInternal that uses confirm()
-// It now takes callbacks for 'yes' and 'no' actions.
 function showConfirmModalInternal(message, onYesCallback, onNoCallback) {
-    if (confirmModal && confirmModalText && confirmModalYesBtn && confirmModalNoBtn) {
-        confirmModalText.textContent = message;
-        confirmModal.classList.add('active');
-
-        // Remove previous listeners to avoid stacking
-        const newYesBtn = confirmModalYesBtn.cloneNode(true);
-        confirmModalYesBtn.parentNode.replaceChild(newYesBtn, confirmModalYesBtn);
-        confirmModalYesBtn = newYesBtn;
-
-        const newNoBtn = confirmModalNoBtn.cloneNode(true);
-        confirmModalNoBtn.parentNode.replaceChild(newNoBtn, confirmModalNoBtn);
-        confirmModalNoBtn = newNoBtn;
-
-        confirmModalYesBtn.addEventListener('click', () => {
-            confirmModal.classList.remove('active');
-            if (onYesCallback) onYesCallback();
-        });
-        confirmModalNoBtn.addEventListener('click', () => {
-            confirmModal.classList.remove('active');
-            if (onNoCallback) onNoCallback();
-        });
-    } else {
-        console.warn("Confirm modal elements not found. Falling back to confirm().");
-        // Fallback to old confirm behavior
-        if (confirm(message)) {
-            if (onYesCallback) onYesCallback();
-        } else {
-            if (onNoCallback) onNoCallback();
-        }
-    }
+    isModalVisible = true;
+    modalType = 'confirm';
+    modalMessage = message;
+    modalOnYes = onYesCallback;
+    modalOnNo = onNoCallback;
+    modalButtons = []; // Will be populated by drawModalInternal
+    console.log("UI: Showing canvas confirm modal:", message);
+    drawGameInternal(); // Redraw to show modal
 }
 
+function closeModalInternal() {
+    isModalVisible = false;
+    modalType = null;
+    modalMessage = "";
+    modalOnYes = null;
+    modalOnNo = null;
+    modalButtons = [];
+    drawGameInternal(); // Redraw to hide modal
+}
 
 // --- Responsive Canvas Sizing ---
 function resizeCanvasInternal() {
@@ -166,7 +140,112 @@ function drawGameInternal() {
     }
     
     updateGameMessageInternal(currentPlayer, gameState);
+
+    // Draw modal if visible
+    if (isModalVisible) {
+        drawModalInternal();
+    }
 }
+
+function drawModalInternal() {
+    if (!ctx || !canvas) return;
+    modalButtons = []; // Reset buttons before drawing
+
+    // Style constants (can be adjusted for appearance)
+    const modalPadding = Math.max(15, currentCellSize * 0.5);
+    const modalWidth = Math.min(canvas.width * 0.8, 400); // Max width 400px or 80% of canvas
+    const modalMinHeight = currentCellSize * 4;
+    const buttonHeight = Math.max(30, currentCellSize * 0.8);
+    const buttonPadding = currentCellSize * 0.3;
+    const cornerRadius = 10;
+    const shadowOffset = 5;
+    const fontSize = Math.max(14, currentCellSize * 0.45);
+
+    // Background overlay
+    ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Calculate text height (simple approximation)
+    ctx.font = `${fontSize}px Arial`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const lines = modalMessage.split('\n');
+    const textHeight = lines.length * fontSize * 1.5; // Approximate line height
+
+    // Modal Content box height (dynamic based on text and buttons)
+    let modalContentHeight = textHeight + modalPadding * 2;
+    if (modalType === 'message' || modalType === 'confirm') {
+        modalContentHeight += buttonHeight + buttonPadding; // Space for buttons
+    }
+    modalContentHeight = Math.max(modalMinHeight, modalContentHeight);
+
+    const modalX = (canvas.width - modalWidth) / 2;
+    const modalY = (canvas.height - modalContentHeight) / 2;
+
+    // Modal Shadow (optional, for depth)
+    ctx.fillStyle = "rgba(0, 0, 0, 0.3)";
+    ctx.beginPath();
+    ctx.roundRect(modalX + shadowOffset, modalY + shadowOffset, modalWidth, modalContentHeight, cornerRadius);
+    ctx.fill();
+
+    // Modal Background
+    ctx.fillStyle = "#f0f0f0"; // Light grey background
+    ctx.beginPath();
+    ctx.roundRect(modalX, modalY, modalWidth, modalContentHeight, cornerRadius);
+    ctx.fill();
+    ctx.strokeStyle = "#cccccc"; // Border
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+
+    // Modal Message Text
+    ctx.fillStyle = "#333333"; // Dark text color
+    let currentTextY = modalY + modalPadding + (fontSize / 2) * lines.length;
+    if (lines.length > 1) currentTextY -= (lines.length -1) * fontSize * 0.5; // Adjust for multi-line centering
+
+    lines.forEach((line, index) => {
+        ctx.fillText(line, modalX + modalWidth / 2, currentTextY + index * fontSize * 1.3);
+    });
+
+    // Buttons
+    const buttonY = modalY + modalContentHeight - modalPadding - buttonHeight;
+    if (modalType === 'message') {
+        const closeButtonWidth = modalWidth * 0.4;
+        const closeButtonX = modalX + (modalWidth - closeButtonWidth) / 2;
+        drawModalButtonInternal("关闭", closeButtonX, buttonY, closeButtonWidth, buttonHeight, 'close');
+    } else if (modalType === 'confirm') {
+        const buttonWidth = modalWidth * 0.35;
+        const spaceBetweenButtons = modalWidth * 0.1;
+        const yesButtonX = modalX + (modalWidth / 2) - buttonWidth - (spaceBetweenButtons / 2);
+        const noButtonX = modalX + (modalWidth / 2) + (spaceBetweenButtons / 2);
+
+        drawModalButtonInternal("是", yesButtonX, buttonY, buttonWidth, buttonHeight, 'yes');
+        drawModalButtonInternal("否", noButtonX, buttonY, buttonWidth, buttonHeight, 'no');
+    }
+}
+
+function drawModalButtonInternal(text, x, y, width, height, action) {
+    if (!ctx) return;
+    const cornerRadius = 5;
+    const fontSize = Math.max(14, currentCellSize * 0.4);
+
+    // Button background
+    ctx.fillStyle = "#6c757d"; // A pleasant grey, can be themed
+    ctx.beginPath();
+    ctx.roundRect(x, y, width, height, cornerRadius);
+    ctx.fill();
+
+    // Button text
+    ctx.fillStyle = "#ffffff"; // White text
+    ctx.font = `${fontSize}px Arial`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, x + width / 2, y + height / 2);
+
+    // Store button info for click detection
+    modalButtons.push({ text, x, y, width, height, action });
+}
+
 
 function drawBoardGridInternal() {
     if (!ctx) return;
@@ -236,6 +315,33 @@ function drawStoneInternal(x, y, player) {
 // --- Event Handling ---
 function handleBoardClickInternal(event) {
     event.preventDefault(); // Crucial for touchend to prevent ghost clicks and scrolling
+    if (!canvas || !ctx) return;
+
+    const { x: canvasX, y: canvasY } = getCanvasRelativePos(canvas, event);
+
+    if (isModalVisible) {
+        // Handle modal button clicks
+        for (const button of modalButtons) {
+            if (canvasX >= button.x && canvasX <= button.x + button.width &&
+                canvasY >= button.y && canvasY <= button.y + button.height) {
+
+                console.log(`UI: Modal button clicked: ${button.action}`);
+                closeModalInternal(); // Close modal on any button click first
+
+                if (button.action === 'yes' && modalOnYes) {
+                    modalOnYes();
+                } else if (button.action === 'no' && modalOnNo) {
+                    modalOnNo();
+                }
+                // 'close' action simply closes the modal, which is already done.
+                return; // Stop further processing
+            }
+        }
+        // If click is outside buttons but modal is visible, do nothing (consume click)
+        return;
+    }
+
+    // If modal is not visible, proceed with game board click logic
     if (!window.gameApi || !window.gameApi.getGameState || window.gameApi.getGameState() !== GAME_STATE_PLAYING) return;
     
     // Ensure it's human player's turn (assuming human is PLAYER_BLACK)
@@ -243,9 +349,6 @@ function handleBoardClickInternal(event) {
         console.log("UI: Not human player's turn.");
         return;
     }
-
-    // Use getCanvasRelativePos from utils.js for accurate coordinates
-    const { x: canvasX, y: canvasY } = getCanvasRelativePos(canvas, event); 
     
     const boardX = Math.floor(canvasX / currentCellSize);
     const boardY = Math.floor(canvasY / currentCellSize);

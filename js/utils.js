@@ -118,5 +118,40 @@ function getRandomInt(min, max) {
     return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-console.log("utils.js loaded with enhanced utilities.");
+// --- Canvas Drawing Helper ---
+/**
+ * Adds a roundRect method to CanvasRenderingContext2D.
+ * Draws a rectangle with rounded corners.
+ * @param {number} x The top left x coordinate
+ * @param {number} y The top left y coordinate
+ * @param {number} width The width of the rectangle
+ * @param {number} height The height of the rectangle
+ * @param {number | {tl: number, tr: number, br: number, bl: number}} radius The corner radius.
+ * Can be a single number for all corners, or an object specifying individual radii.
+ */
+if (typeof CanvasRenderingContext2D !== 'undefined' && CanvasRenderingContext2D.prototype) {
+    CanvasRenderingContext2D.prototype.roundRect = function (x, y, width, height, radius) {
+        if (typeof radius === 'number') {
+            radius = { tl: radius, tr: radius, br: radius, bl: radius };
+        } else {
+            const defaultRadius = { tl: 0, tr: 0, br: 0, bl: 0 };
+            for (const side in defaultRadius) {
+                radius[side] = radius[side] || defaultRadius[side];
+            }
+        }
+        this.beginPath();
+        this.moveTo(x + radius.tl, y);
+        this.lineTo(x + width - radius.tr, y);
+        this.quadraticCurveTo(x + width, y, x + width, y + radius.tr);
+        this.lineTo(x + width, y + height - radius.br);
+        this.quadraticCurveTo(x + width, y + height, x + width - radius.br, y + height);
+        this.lineTo(x + radius.bl, y + height);
+        this.quadraticCurveTo(x, y + height, x, y + height - radius.bl);
+        this.lineTo(x, y + radius.tl);
+        this.quadraticCurveTo(x, y, x + radius.tl, y);
+        this.closePath();
+    };
+}
+
+console.log("utils.js loaded with enhanced utilities and CanvasRenderingContext2D.roundRect polyfill.");
 
