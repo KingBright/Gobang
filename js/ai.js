@@ -11,13 +11,16 @@ const AI_DIFFICULTY_LEVELS = {
 let currentAiDifficulty = 3; // Default to Intermediate
 let currentSearchDepth = AI_DIFFICULTY_LEVELS[currentAiDifficulty];
 
-// PATTERN_SCORES are needed for Smart Undo if its logic remains on main thread
-const PATTERN_SCORES = {
+const PATTERN_SCORES = { // Still useful for reference or light main-thread logic if any
     FIVE_IN_A_ROW: 100000,
-    // Other scores are not strictly needed by main thread if findBestMove for smart undo is simplified or removed.
 };
 
 let aiWorker;
+
+// For Omniscience Promise
+let omniEvaluationPromise = null;
+let omniResolve = null;
+let omniReject = null;
 
 function initAiWorker() {
     if (typeof(Worker) !== "undefined") {
@@ -26,45 +29,67 @@ function initAiWorker() {
                 aiWorker = new Worker('js/ai.worker.js');
                 console.log("AI Worker initialized.");
 
-                aiWorker.onmessage = function(e) {
-                    // This handler will be overridden by specific promises below
-                    console.log("AI Worker generic message:", e.data);
-                };
-                aiWorker.onerror = function(e) {
-                    console.error("Error in AI Worker:", e.message, e.filename, e.lineno);
-                    // Potentially reject any pending promises or show error to user
-                };
+                // Set up global handlers. Specific operations can temporarily override these.
+                aiWorker.onmessage = globalWorkerMessageHandler;
+                aiWorker.onerror = globalWorkerErrorHandler;
+
             } catch (err) {
                 console.error("Failed to initialize AI Worker:", err);
-                aiWorker = null; // Ensure worker is null if failed
+                aiWorker = null;
             }
         }
     } else {
-        console.warn("Web Workers not supported in this browser. AI will run on main thread (not yet implemented as fallback).");
-        // Fallback to synchronous AI would be needed here if we want to support non-worker browsers.
-        // For now, assume worker support or AI features might be degraded.
+        console.warn("Web Workers not supported. AI features requiring worker will be unavailable.");
     }
 }
+
+// Global message handler for worker messages not tied to a specific short-lived promise
+const globalWorkerMessageHandler = function(e) {
+    console.log("Global AI Worker message handler in ai.js:", e.data);
+    if (e.data.type === 'omniEvaluationComplete') {
+        if (omniResolve) {
+            omniResolve(e.data.hints);
+        } else {
+            console.warn("Received omniEvaluationComplete but no pending promise found.");
+        }
+        omniEvaluationPromise = null; // Clear promise variables
+        omniResolve = null;
+        omniReject = null;
+    } else if (e.data.type === 'error') { // General errors from worker
+        console.error("AI Worker reported a global error:", e.data.error);
+        if (omniReject) {
+            omniReject(new Error(e.data.error));
+        }
+        omniEvaluationPromise = null;
+        omniResolve = null;
+        omniReject = null;
+    } else {
+        console.log("AI Worker generic message (unhandled by global handler):", e.data);
+    }
+};
+
+const globalWorkerErrorHandler = function(e) {
+    console.error("Global error from AI Worker in ai.js:", e.message, e.filename, e.lineno);
+    if (omniReject) {
+        omniReject(new Error(`AI Worker global error: ${e.message}`));
+    }
+    omniEvaluationPromise = null;
+    omniResolve = null;
+    omniReject = null;
+};
 
 // Call init on script load
 initAiWorker();
 
-
-// Main function for AI to make a move, now returns a Promise
 function aiMakeMove(currentBoard) {
     return new Promise((resolve, reject) => {
         if (!aiWorker) {
             console.error("AI Worker not available. Cannot make move.");
-            // Fallback: find any valid empty spot (synchronous)
-            // This is a simplified fallback and doesn't use the sophisticated AI.
-            console.log("Attempting synchronous fallback for aiMakeMove.");
+            // Synchronous fallback (simplified)
             for (let r = 0; r < BOARD_SIZE; r++) {
                 for (let c = 0; c < BOARD_SIZE; c++) {
-                    // Assuming BOARD_SIZE and EMPTY are available (e.g. from utils.js)
                     if (currentBoard[r][c] === EMPTY) {
-                        console.log(`Synchronous fallback found empty spot: (${c}, ${r})`);
-                        resolve({ x: c, y: r }); // Resolve with the move object
-                        return;
+                        resolve({ x: c, y: r }); return;
                     }
                 }
             }
@@ -74,112 +99,97 @@ function aiMakeMove(currentBoard) {
 
         console.log(`AI (Player ${PLAYER_WHITE}) is thinking with depth ${currentSearchDepth} via Worker...`);
 
-        aiWorker.postMessage({
-            board: currentBoard, // Make sure this is a deep copy if needed by worker for safety, though worker should handle its own copies.
-            searchDepth: currentSearchDepth,
-            aiPlayer: PLAYER_WHITE // Assuming AI is always PLAYER_WHITE, or pass dynamically
-            // Pass any other necessary constants if not imported by worker, e.g. BOARD_SIZE, EMPTY etc.
-            // However, ai.worker.js tries to import utils.js which should define them.
-        });
+        const tempOnMessage = function(e) {
+            aiWorker.onmessage = globalWorkerMessageHandler; // Restore global handler
+            aiWorker.onerror = globalWorkerErrorHandler;   // Restore global handler
 
-        aiWorker.onmessage = function(e) {
-            if (e.data.error) {
-                console.error("AI Worker returned an error:", e.data.error);
-                reject(new Error(e.data.error));
+            if (e.data.type === 'bestMoveFound') {
+                console.log(`AI Worker chose move: (${e.data.move ? e.data.move.x : 'N/A'}, ${e.data.move ? e.data.move.y : 'N/A'}) score: ${e.data.score}`);
+                resolve(e.data.move);
+            } else if (e.data.type === 'error' || e.data.error) { // Catch worker-reported errors
+                console.error("AI Worker returned an error during aiMakeMove:", e.data.error);
+                reject(new Error(e.data.error || "Unknown error from AI worker during move calculation."));
             } else {
-                console.log(`AI Worker chose move: (${e.data.move ? e.data.move.x : 'null'}, ${e.data.move ? e.data.move.y : 'null'}) with score: ${e.data.score}`);
-                resolve(e.data.move); // Resolve the promise with the move object
+                console.warn("AI Worker returned unexpected message during aiMakeMove:", e.data);
+                reject(new Error("Unexpected message from AI worker during move calculation."));
             }
         };
 
-        aiWorker.onerror = function(e) {
-            console.error("Error from AI Worker:", e);
+        const tempOnError = function(e) {
+            aiWorker.onmessage = globalWorkerMessageHandler; // Restore global handler
+            aiWorker.onerror = globalWorkerErrorHandler;   // Restore global handler
+            console.error("Error from AI Worker during aiMakeMove:", e.message, e.filename, e.lineno);
             reject(new Error(`AI Worker error: ${e.message}`));
         };
+
+        // Temporarily override handlers for this specific call
+        aiWorker.onmessage = tempOnMessage;
+        aiWorker.onerror = tempOnError;
+
+        aiWorker.postMessage({
+            type: 'findBestMove',
+            board: currentBoard, // Worker should handle copying if it modifies the board.
+            searchDepth: currentSearchDepth,
+            aiPlayer: PLAYER_WHITE // Assuming AI is always PLAYER_WHITE for now
+        });
     });
 }
+
+function evaluateAllPointsForOmniscience(board, player) {
+    if (!aiWorker) {
+        console.error("AI Worker not available. Cannot evaluate for omniscience.");
+        return Promise.reject(new Error("AI Worker not available."));
+    }
+
+    if (omniEvaluationPromise) {
+        // Optionally, cancel the previous request or let it run.
+        // For now, we'll let the new one supersede the promise variables.
+        console.warn("New omniscience evaluation requested while previous one might be pending.");
+        // If omniReject was set, you might call it:
+        // if (omniReject) omniReject(new Error("Superseded by new omniscience request"));
+    }
+
+    omniEvaluationPromise = new Promise((resolve, reject) => {
+        omniResolve = resolve;
+        omniReject = reject;
+
+        // Global handlers (globalWorkerMessageHandler, globalWorkerErrorHandler)
+        // are already set up to handle 'omniEvaluationComplete' and errors.
+
+        aiWorker.postMessage({
+            type: 'evaluateAllPoints',
+            board: board,
+            playerForOmni: player
+        });
+    });
+    return omniEvaluationPromise;
+}
+
 
 function setAiDifficulty(level) {
     if (AI_DIFFICULTY_LEVELS[level]) {
         currentAiDifficulty = level;
         currentSearchDepth = AI_DIFFICULTY_LEVELS[level];
-        console.log(`AI difficulty set to ${level}, search depth ${currentSearchDepth}. Worker will use this on next call.`);
+        console.log(`AI difficulty set to ${level}, search depth ${currentSearchDepth}.`);
     } else {
         console.error(`Invalid AI difficulty level: ${level}`);
     }
 }
 
-// --- Functions for Smart Undo / Omniscience (Main Thread Fallbacks or Simplifications) ---
-// These are now more complex because the main AI logic is in the worker.
-// For simplicity, Smart Undo's AI check will be temporarily disabled.
-// Omniscience mode will also be non-functional for now.
-
+// Stub for potential main-thread light checks, if ever needed.
+// Currently, major AI logic is in worker.
 function findBestMoveMainThreadLight(board, depth, aiPlayer = PLAYER_WHITE) {
-    // This is a very simplified version for main-thread checks like smart undo.
-    // It does NOT use alpha-beta and is only for shallow depths (e.g., depth 1).
-    // It needs evaluateBoardLight and getPossibleMoves.
-    // For now, let's make it return a dummy "no threat" response.
-    console.warn("findBestMoveMainThreadLight is a simplified stub.");
-    if (depth <= 0) return { score: 0, move: null}; // Simplified base case
-
-    const possibleMoves = getPossibleMovesMainThreadLight(board);
-    if (possibleMoves.length === 0) return {score: 0, move: null};
-
-    // Just check if any move leads to an immediate win for aiPlayer (very basic)
-    for (const move of possibleMoves) {
-        const tempBoard = makeTemporaryMoveMainThread(board, move.x, move.y, aiPlayer);
-        // Need a checkWinForPlayer or simplified evaluation here.
-        // Let's assume for now no immediate win is found by this shallow check.
-    }
-    // Return a neutral score and the first possible move as a placeholder
-    return { score: 0, move: possibleMoves[0] };
+    console.warn("findBestMoveMainThreadLight is a simplified stub and not recommended for primary use.");
+    return { score: 0, move: null}; // Placeholder
 }
-
-function getPossibleMovesMainThreadLight(board) {
-    // Simplified getPossibleMoves: just return first few empty cells or center.
-    // This is NOT for robust AI play, just for a quick check.
-    const moves = [];
-    if (!board) return moves; // Should not happen
-    let count = 0;
-    // Center first if empty
-    const centerX = Math.floor(BOARD_SIZE / 2);
-    const centerY = Math.floor(BOARD_SIZE / 2);
-    if (board[centerY][centerX] === EMPTY) {
-        moves.push({x: centerX, y: centerY});
-        count++;
-    }
-    for (let r = 0; r < BOARD_SIZE && count < 5; r++) {
-        for (let c = 0; c < BOARD_SIZE && count < 5; c++) {
-            if (r === centerY && c === centerX) continue; // Skip center if already added
-            if (board[r][c] === EMPTY) {
-                moves.push({ x: c, y: r });
-                count++;
-            }
-        }
-    }
-    return moves;
-}
-
-function makeTemporaryMoveMainThread(originalBoard, x, y, player) {
-    // Simplified version, assumes BOARD_SIZE and EMPTY are available
-    const tempBoard = originalBoard.map(row => [...row]);
-    if (x >= 0 && x < BOARD_SIZE && y >= 0 && y < BOARD_SIZE && tempBoard[y][x] === EMPTY) {
-        tempBoard[y][x] = player;
-    }
-    return tempBoard;
-}
-
 
 console.log("ai.js (main thread) loaded. Initializing AI Worker...");
 
 window.aiApi = {
-    aiMakeMove: aiMakeMove, // This is now async and returns a Promise
+    aiMakeMove: aiMakeMove,
     setAiDifficulty: setAiDifficulty,
-    getPatternScores: () => { return {...PATTERN_SCORES}; }, // For smart undo, if it were to use PATTERN_SCORES directly
-
-    // Temporarily, findBestMove and evaluatePointOmniscience will be stubs or removed
-    // as their full logic is in the worker. Smart Undo and Omniscience will be affected.
-    findBestMove: findBestMoveMainThreadLight, // Stub for smart undo on main thread
-    evaluatePointOmniscience: () => 0, // Stub for omniscience
+    getPatternScores: () => { return {...PATTERN_SCORES}; }, // Might be useful for UI display of scores
+    evaluateAllPointsForOmniscience: evaluateAllPointsForOmniscience,
+    // findBestMove: findBestMoveMainThreadLight, // Exposing stub if needed, but worker is primary
 };
 

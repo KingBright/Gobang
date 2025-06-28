@@ -304,19 +304,55 @@ function makeTemporaryMove(originalBoard, x, y, player) {
 // Worker message handler
 self.onmessage = function(e) {
     console.log('ai.worker.js: Message received from main script:', e.data);
-    const { board, searchDepth, aiPlayer } = e.data;
+    const { type, board, searchDepth, aiPlayer, playerForOmni } = e.data; // Added type and playerForOmni
 
-    if (!board || typeof searchDepth === 'undefined') {
-        console.error('ai.worker.js: Invalid data received.');
-        self.postMessage({ error: 'Invalid data received by worker' });
-        return;
+    if (type === 'findBestMove') { // Existing functionality
+        if (!board || typeof searchDepth === 'undefined') {
+            console.error('ai.worker.js: Invalid data received for findBestMove.');
+            self.postMessage({ type: 'error', error: 'Invalid data received by worker for findBestMove' });
+            return;
+        }
+        // Ensure aiPlayer is valid, default to PLAYER_WHITE if not provided or invalid
+        const effectiveAiPlayer = (aiPlayer === PLAYER_BLACK || aiPlayer === PLAYER_WHITE) ? aiPlayer : PLAYER_WHITE;
+
+        const bestMoveResult = findBestMove(board, searchDepth, -Infinity, Infinity, true, effectiveAiPlayer);
+        console.log('ai.worker.js: Calculation complete for findBestMove. Posting message back to main script:', bestMoveResult.move);
+        self.postMessage({ type: 'bestMoveFound', move: bestMoveResult.move, score: bestMoveResult.score });
+
+    } else if (type === 'evaluateAllPoints') { // New functionality for Omniscience
+        if (!board || !playerForOmni) {
+            console.error('ai.worker.js: Invalid data received for evaluateAllPoints. Board or playerForOmni missing.');
+            self.postMessage({ type: 'error', error: 'Invalid data received by worker for evaluateAllPoints' });
+            return;
+        }
+
+        const hints = [];
+        // Make a copy of the board to ensure the original is not modified by scoreMoveHeuristically
+        const boardCopy = board.map(row => [...row]);
+
+        for (let y = 0; y < BOARD_SIZE; y++) {
+            for (let x = 0; x < BOARD_SIZE; x++) {
+                if (boardCopy[y][x] === EMPTY) {
+                    // Pass the copy of the board to scoreMoveHeuristically
+                    const score = scoreMoveHeuristically(boardCopy, x, y, playerForOmni);
+                    // Only send back hints that have a positive score, indicating a potentially good move.
+                    // A score of 0 might mean neutral or no specific advantage found by the heuristic.
+                    if (score > 0) {
+                        hints.push({ x, y, score });
+                    }
+                }
+            }
+        }
+        // Sort hints by score in descending order to show best hints first
+        hints.sort((a, b) => b.score - a.score);
+
+        console.log(`ai.worker.js: Evaluated ${hints.length} points for omniscience (score > 0).`);
+        self.postMessage({ type: 'omniEvaluationComplete', hints: hints });
+
+    } else {
+        console.error('ai.worker.js: Unknown message type received:', type);
+        self.postMessage({ type: 'error', error: `Unknown message type: ${type}` });
     }
-
-    // Note: PLAYER_WHITE is assumed to be aiPlayer if not specified, but it's better to pass it.
-    const bestMoveResult = findBestMove(board, searchDepth, -Infinity, Infinity, true, aiPlayer || PLAYER_WHITE);
-
-    console.log('ai.worker.js: Calculation complete. Posting message back to main script:', bestMoveResult.move);
-    self.postMessage({ move: bestMoveResult.move, score: bestMoveResult.score });
 };
 
 console.log("ai.worker.js loaded and ready for messages.");
