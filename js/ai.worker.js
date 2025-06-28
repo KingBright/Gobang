@@ -81,6 +81,89 @@ function initializeHelperBitmasks() {
 // Call initialization for masks and global bitboards
 initializeHelperBitmasks();
 
+const LOGGING_PATTERN_TYPES = [
+    { name: PT_FIVE, bitwiseDetector: [detectHorizontalFiveBitwise, detectVerticalFiveBitwise, detectDiagonalDownRightFiveBitwise, detectDiagonalDownLeftFiveBitwise], args: ['playerBB'], category: 'Five' },
+    { name: PT_LIVE_FOUR, bitwiseDetector: [detectHorizontalLiveFourBitwise, detectVerticalLiveFourBitwise, detectDiagonalDownRightLiveFourBitwise, detectDiagonalDownLeftLiveFourBitwise], args: ['playerBB', 'emptyBB'], category: 'Four' },
+    { name: PT_DEAD_FOUR, bitwiseDetector: [detectHorizontalDeadFourBitwise, detectVerticalDeadFourBitwise, detectDiagonalDownRightDeadFourBitwise, detectDiagonalDownLeftDeadFourBitwise], args: ['playerBB', 'opponentBB', 'emptyBB'], category: 'Four' },
+    { name: PT_LIVE_THREE, bitwiseDetector: [detectHorizontalLiveThreeBitwise, detectVerticalLiveThreeBitwise, detectDiagonalDownRightLiveThreeBitwise, detectDiagonalDownLeftLiveThreeBitwise], args: ['playerBB', 'emptyBB'], category: 'Three' },
+    { name: PT_DEAD_THREE, bitwiseDetector: [detectHorizontalDeadThreeBitwise, detectVerticalDeadThreeBitwise, detectDiagonalDownRightDeadThreeBitwise, detectDiagonalDownLeftDeadThreeBitwise], args: ['playerBB', 'opponentBB', 'emptyBB'], category: 'Three' },
+    { name: PT_LIVE_JUMP_THREE, bitwiseDetector: [detectHorizontalLiveJumpThreeBitwise, detectVerticalLiveJumpThreeBitwise, detectDiagonalDownRightLiveJumpThreeBitwise, detectDiagonalDownLeftLiveJumpThreeBitwise], args: ['playerBB', 'emptyBB'], category: 'ThreeGapped' },
+    { name: PT_DEAD_JUMP_THREE, bitwiseDetector: [detectHorizontalDeadJumpThreeBitwise, detectVerticalDeadJumpThreeBitwise, detectDiagonalDownRightDeadJumpThreeBitwise, detectDiagonalDownLeftDeadJumpThreeBitwise], args: ['playerBB', 'opponentBB', 'emptyBB'], category: 'ThreeGapped' },
+    { name: PT_LIVE_TWO, bitwiseDetector: [detectHorizontalLiveTwoBitwise, detectVerticalLiveTwoBitwise, detectDiagonalDownRightLiveTwoBitwise, detectDiagonalDownLeftLiveTwoBitwise], args: ['playerBB', 'emptyBB'], category: 'Two' },
+    { name: PT_DEAD_TWO, bitwiseDetector: [detectHorizontalDeadTwoBitwise, detectVerticalDeadTwoBitwise, detectDiagonalDownRightDeadTwoBitwise, detectDiagonalDownLeftDeadTwoBitwise], args: ['playerBB', 'opponentBB', 'emptyBB'], category: 'Two' },
+    // PT_DOUBLE_THREE is handled dynamically in calculateScoreForPlayerOffensive, not purely by simple bitwise counts here
+];
+
+function logDetailedBoardEvaluation(evalLabel, playerForOffensiveEval, heuristicLevelForOffensiveEval, opponentForDefensiveEval) {
+    console.log(`--- DETAILED BOARD EVALUATION: "${evalLabel}" ---`);
+    console.log(`Evaluating from perspective of: Player ${playerForOffensiveEval} (Heuristic: ${heuristicLevelForOffensiveEval}) vs Opponent: Player ${opponentForDefensiveEval} (Heuristic: master)`);
+
+    const emptyBB = computeEmptyCellsBitboard();
+
+    let detailedScores = { player: { total: 0, patterns: {} }, opponent: { total: 0, patterns: {} } };
+
+    // Evaluate for playerForOffensiveEval
+    const playerBB = bitboards[playerForOffensiveEval];
+    const oppOfPlayerBB = bitboards[opponentForDefensiveEval]; // This is the opponent relative to playerForOffensiveEval
+
+    console.log(`  Patterns for Player ${playerForOffensiveEval} (using heuristic: ${heuristicLevelForOffensiveEval}):`);
+    for (const pType of LOGGING_PATTERN_TYPES) {
+        let count = 0;
+        const params = { playerBB: playerBB, opponentBB: oppOfPlayerBB, emptyBB: emptyBB };
+        for (const detector of pType.bitwiseDetector) {
+            const detectorParams = pType.args.map(argName => params[argName]);
+            count += PopCountBoardArray(detector(...detectorParams));
+        }
+        if (count > 0) {
+            let baseScore = (PATTERN_SCORES[pType.name] && PATTERN_SCORES[pType.name].offensive) ? PATTERN_SCORES[pType.name].offensive : 0;
+            let effectiveScore = baseScore;
+            // Apply heuristic level adjustments FOR LOGGING (mirroring calculateScoreForPlayerOffensive)
+            if (pType.name === PT_LIVE_FOUR || pType.name === PT_DEAD_FOUR) {
+                if (heuristicLevelForOffensiveEval === 'novice') effectiveScore = baseScore * (pType.name === PT_LIVE_FOUR ? 0.001 : 0.01);
+                else if (heuristicLevelForOffensiveEval === 'apprentice') effectiveScore = baseScore * (pType.name === PT_LIVE_FOUR ? 0.01 : 0.1);
+            } else if (pType.name === PT_LIVE_THREE || pType.name === PT_DEAD_THREE) {
+                if (heuristicLevelForOffensiveEval === 'novice') effectiveScore = baseScore * 0.1;
+                else if (heuristicLevelForOffensiveEval === 'apprentice') effectiveScore = baseScore * 0.25;
+            } else if (pType.name === PT_LIVE_JUMP_THREE || pType.name === PT_DEAD_JUMP_THREE) {
+                if (heuristicLevelForOffensiveEval === 'novice') effectiveScore = baseScore * 0.05;
+                else if (heuristicLevelForOffensiveEval === 'apprentice') effectiveScore = baseScore * 0.2;
+            }
+            // Note: Double Three not logged here as it's complex.
+            console.log(`    - ${pType.name}: Count=${count}, BaseScorePer=${baseScore}, EffectiveScorePer=${effectiveScore.toFixed(0)}, TotalEffective=${(count * effectiveScore).toFixed(0)}`);
+            detailedScores.player.patterns[pType.name] = (detailedScores.player.patterns[pType.name] || 0) + count * effectiveScore;
+        }
+    }
+    detailedScores.player.total = calculateScoreForPlayerOffensive(playerForOffensiveEval, heuristicLevelForOffensiveEval); // Recalculate for accuracy including DoubleThrees etc.
+    console.log(`    Calculated Total Offensive Score for Player ${playerForOffensiveEval}: ${detailedScores.player.total.toFixed(0)}`);
+
+    // Evaluate for opponentForDefensiveEval (always 'master' heuristic for their patterns)
+    const opponentBB = bitboards[opponentForDefensiveEval];
+    const oppOfOpponentBB = bitboards[playerForOffensiveEval]; // This is playerForOffensiveEval relative to opponentForDefensiveEval
+
+    console.log(`  Patterns for Opponent ${opponentForDefensiveEval} (using heuristic: master):`);
+     for (const pType of LOGGING_PATTERN_TYPES) {
+        let count = 0;
+        const params = { playerBB: opponentBB, opponentBB: oppOfOpponentBB, emptyBB: emptyBB };
+        for (const detector of pType.bitwiseDetector) {
+            const detectorParams = pType.args.map(argName => params[argName]);
+            count += PopCountBoardArray(detector(...detectorParams));
+        }
+        if (count > 0) {
+            let baseScore = (PATTERN_SCORES[pType.name] && PATTERN_SCORES[pType.name].offensive) ? PATTERN_SCORES[pType.name].offensive : 0;
+            // No heuristic adjustment for opponent's score calculation for logging as it's always 'master'
+            console.log(`    - ${pType.name}: Count=${count}, ScorePer=${baseScore}, Total=${count * baseScore}`);
+            detailedScores.opponent.patterns[pType.name] = (detailedScores.opponent.patterns[pType.name] || 0) + count * baseScore;
+        }
+    }
+    detailedScores.opponent.total = calculateScoreForPlayerOffensive(opponentForDefensiveEval, 'master'); // Recalculate for accuracy
+    console.log(`    Calculated Total Offensive Score for Opponent ${opponentForDefensiveEval}: ${detailedScores.opponent.total.toFixed(0)}`);
+
+    const finalBoardScore = detailedScores.player.total - detailedScores.opponent.total;
+    console.log(`  FINAL BOARD SCORE (Player ${playerForOffensiveEval} score - Player ${opponentForDefensiveEval} score): ${finalBoardScore.toFixed(0)}`);
+    console.log(`--- END DETAILED BOARD EVALUATION: "${evalLabel}" ---`);
+}
+
+
 function initializeGlobalBitboards() {
     bitboards[PLAYER_BLACK] = Array(NUM_BITBOARDS_PER_PLAYER).fill(BigInt(0));
     bitboards[PLAYER_WHITE] = Array(NUM_BITBOARDS_PER_PLAYER).fill(BigInt(0));
@@ -1334,6 +1417,17 @@ self.onmessage = function(e) {
         initGlobalBitboardsFrom2DArray(board);
         const initialBoardHash = computeZobristHashFromBitboards();
 
+        // --- Log initial board state before AI search ---
+        const humanPlayerForInitialLog = (effectiveAiPlayer === PLAYER_BLACK) ? PLAYER_WHITE : PLAYER_BLACK;
+        console.log(`AI Worker: Received board. AI is Player ${effectiveAiPlayer}. Human is Player ${humanPlayerForInitialLog}. Difficulty: ${difficultyProfile.name}`);
+        logDetailedBoardEvaluation(
+            `Initial state before AI Player ${effectiveAiPlayer} searches`,
+            effectiveAiPlayer, // Evaluate from AI's perspective
+            difficultyProfile.heuristicLevel,
+            humanPlayerForInitialLog
+        );
+        // --- End log initial board state ---
+
         if (difficultyProfile.useOpeningBook && openingBook.has(initialBoardHash.toString())) {
             const bookMoves = openingBook.get(initialBoardHash.toString());
             if (bookMoves && bookMoves.length > 0) {
@@ -1355,43 +1449,70 @@ self.onmessage = function(e) {
         );
         const endTime = performance.now();
         console.log(`AI Worker: findBestMove took ${(endTime - startTime).toFixed(2)} ms. TT size: ${transpositionTable.size}, Depth: ${difficultyProfile.searchDepth}, Heuristic: ${difficultyProfile.heuristicLevel}`);
+        console.log('AI Worker: Minimax best move:', bestMoveResult.move, 'Score:', bestMoveResult.score);
 
         let finalMove = bestMoveResult.move;
+
+        // --- Log evaluation of the chosen move's resulting state ---
+        if (finalMove) {
+            setCellBit(bitboards[effectiveAiPlayer], finalMove.y, finalMove.x);
+            const humanPlayerForFinalLog = (effectiveAiPlayer === PLAYER_BLACK) ? PLAYER_WHITE : PLAYER_BLACK;
+            logDetailedBoardEvaluation(
+                `State after AI Player ${effectiveAiPlayer} chose move (${finalMove.x},${finalMove.y})`,
+                effectiveAiPlayer,
+                difficultyProfile.heuristicLevel,
+                humanPlayerForFinalLog
+            );
+            clearCellBit(bitboards[effectiveAiPlayer], finalMove.y, finalMove.x); // Undo for safety, though board will be reset on next call
+        } else {
+            console.log("AI Worker: No move found or game over, skipping final state log.");
+        }
+        // --- End log evaluation of chosen move ---
+
+
         if (difficultyProfile.randomness > 0 && Math.random() < difficultyProfile.randomness && bestMoveResult.move) {
             console.log(`AI Worker: Applying randomness (chance: ${difficultyProfile.randomness}, topN: ${difficultyProfile.randomTopN})`);
-            let possibleMoves = getPossibleMoves();
+            let possibleMoves = getPossibleMoves(); // get moves on original board
             if (possibleMoves.length > 1) {
+                // Re-evaluate topN moves from the perspective of the original board state for randomness
                 let scoredMoves = possibleMoves.map(m => {
                     let score;
-                    if(getCellStatus(m.y, m.x) === EMPTY) {
+                    if(getCellStatus(m.y, m.x) === EMPTY) { // Check on original board
                         setCellBit(bitboards[effectiveAiPlayer], m.y, m.x);
+                        // Evaluate this hypothetical state
                         score = evaluateBoard(effectiveAiPlayer, difficultyProfile.heuristicLevel);
                         clearCellBit(bitboards[effectiveAiPlayer], m.y, m.x);
                     } else {
-                        score = -Infinity;
+                        score = -Infinity; // Should not happen if getPossibleMoves is correct
                     }
                     return { move: m, score: score };
                 });
                 scoredMoves.sort((a, b) => b.score - a.score);
                 const topNToConsider = Math.min(scoredMoves.length, difficultyProfile.randomTopN);
                 const topNMoves = scoredMoves.slice(0, topNToConsider);
+
                 if (topNMoves.length > 0) {
-                    const randomIndex = Math.floor(Math.random() * topNMoves.length);
-                    finalMove = topNMoves[randomIndex].move;
-                    console.log(`AI Worker: Randomly selected move (${finalMove.x},${finalMove.y}) from top ${topNMoves.length} options (Original best: ${bestMoveResult.move.x},${bestMoveResult.move.y}).`);
+                    const originalBestIsTop = topNMoves.some(sm => sm.move.x === bestMoveResult.move.x && sm.move.y === bestMoveResult.move.y);
+                    const targetMovesForRandom = originalBestIsTop ? topNMoves : [bestMoveResult, ...topNMoves.slice(0,topNToConsider-1)];
+
+                    const randomIndex = Math.floor(Math.random() * Math.min(targetMovesForRandom.length, difficultyProfile.randomTopN) );
+                    finalMove = targetMovesForRandom[randomIndex].move;
+                    console.log(`AI Worker: Randomly selected move (${finalMove.x},${finalMove.y}) from top options. Original Minimax best: (${bestMoveResult.move.x},${bestMoveResult.move.y}).`);
                 } else {
                     console.log(`AI Worker: Randomness triggered, but no alternative moves found after shallow eval. Sticking to minimax best.`);
                 }
             } else if (possibleMoves.length === 1 && bestMoveResult.move && (possibleMoves[0].x !== bestMoveResult.move.x || possibleMoves[0].y !== bestMoveResult.move.y)) {
                  console.warn(`AI Worker: Randomness context - Minimax best move differs from the only possible move. Opting for the single possible move.`);
-                finalMove = possibleMoves[0];
+                finalMove = possibleMoves[0]; // Should be same as bestMoveResult.move if only one
             }
-             else {
-                console.log(`AI Worker: Randomness triggered, but only one possible move or no initial best move. Sticking to it.`);
+             else { // No best move from minimax, or only one possible move anyway
+                console.log(`AI Worker: Randomness triggered, but no meaningful alternatives or no initial best move. Sticking to minimax result.`);
             }
         }
+
         console.log('ai.worker.js: Calculation complete. Posting final move to main script:', finalMove);
         self.postMessage({ type: 'bestMoveFound', move: finalMove, score: bestMoveResult.score });
+
     } else if (type === 'evaluateAllPoints') {
         const { board: omniBoard, playerForOmni: omniPlayer } = e.data;
         if (!omniBoard || !omniPlayer) {
