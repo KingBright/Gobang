@@ -434,8 +434,77 @@ function checkLineOfFour(board, r, c, player) {
             break;
         }
     }
-    board[r][c] = EMPTY;
-    return isFour;
+    board[r][c] = EMPTY; // Revert before returning
+
+    if (isFour) {
+        // Now, check if this line of four can extend to five
+        // The 'isFour' check confirmed a line of 4 exists involving (r,c)
+        // We need to find that line and check its ends.
+        // This part is tricky because checkLineOfFour doesn't return the line itself.
+        // For simplicity in this step, we'll re-evaluate from (r,c)
+        // A more optimized approach would integrate this into the count loop.
+        board[r][c] = player; // Place stone again for extend check
+        let canBecomeFive = false;
+        for (const dir of directions) {
+            // Check one side for the line
+            let stones = [{r,c}];
+            for (let i = 1; i < 4; i++) { // Check 3 more in one dir
+                const nextR = r + i * dir.dy;
+                const nextC = c + i * dir.dx;
+                if (isInBounds(nextC, nextR) && board[nextR][nextC] === player) {
+                    stones.push({r: nextR, c: nextC});
+                } else break;
+            }
+             // Check other side for the line
+            for (let i = 1; i < 4; i++) { // Check 3 more in other dir
+                const prevR = r - i * dir.dy;
+                const prevC = c - i * dir.dx;
+                 if (isInBounds(prevC, prevR) && board[prevR][prevC] === player) {
+                    stones.unshift({r: prevR, c: prevC}); // Add to beginning
+                } else break;
+            }
+
+            if (stones.length >= 4) { // We found a line of at least 4 stones including (r,c)
+                // Sort stones by row, then col to get consistent start/end
+                stones.sort((a,b) => a.r === b.r ? a.c - b.c : a.r - b.r);
+                // If dir is vertical, sort by col then row
+                if (dir.dx === 0) stones.sort((a,b) => a.c === b.c ? a.r - b.r : a.c - b.c);
+
+
+                // We need to iterate through all actual 4-stone subsegments
+                for (let i = 0; i <= stones.length - 4; i++) {
+                    const subSegment = stones.slice(i, i + 4);
+
+                    // Determine the actual direction of this subSegment
+                    let actualDir = { dr: 0, dc: 0 };
+                    if (subSegment.length > 1) {
+                        actualDir.dr = Math.sign(subSegment[1].r - subSegment[0].r);
+                        actualDir.dc = Math.sign(subSegment[1].c - subSegment[0].c);
+                    }
+
+                    const firstStone = subSegment[0];
+                    const lastStone = subSegment[3];
+
+                    // Check space before the first stone of the 4-line
+                    const r_before = firstStone.r - actualDir.dr;
+                    const c_before = firstStone.c - actualDir.dc;
+                    // Check space after the last stone of the 4-line
+                    const r_after = lastStone.r + actualDir.dr;
+                    const c_after = lastStone.c + actualDir.dc;
+
+                    if ((isInBounds(c_before, r_before) && board[r_before][c_before] === EMPTY) ||
+                        (isInBounds(c_after, r_after) && board[r_after][c_after] === EMPTY)) {
+                        canBecomeFive = true;
+                        break; // Found one extendable 4-line
+                    }
+                }
+            }
+            if (canBecomeFive) break; // Break from directions loop
+        }
+        board[r][c] = EMPTY; // Final revert
+        return canBecomeFive;
+    }
+    return false; // Not even a four
 }
 
 
@@ -529,14 +598,32 @@ function countFoursFormed(board, r, c, player) {
             }
 
             if (isFourInARow) {
-                fourCount++;
-                checkedLines.push(dirKey);
-                break;
+                // Found a 4-in-a-row. Now check if it's extendable to five.
+                // sR, sC is the start of this 4-in-a-row. dir is its direction.
+                const r_before = sR - dir.dr;
+                const c_before = sC - dir.dc;
+                const r_after = sR + 4 * dir.dr; // End of 4-in-a-row is (sR + 3*dir.dr), so after is (sR + 4*dir.dr)
+                const c_after = sC + 4 * dir.dc;
+
+                let extendable = false;
+                if (isInBounds(c_before, r_before) && board[r_before][c_before] === EMPTY) {
+                    extendable = true;
+                }
+                if (!extendable && isInBounds(c_after, r_after) && board[r_after][c_after] === EMPTY) {
+                    extendable = true;
+                }
+
+                if (extendable) {
+                    fourCount++;
+                    checkedLines.push(dirKey); // Mark this line direction as counted for an extendable four
+                }
+                break; // Found a 4-in-a-row (extendable or not) in this specific alignment starting sR,sC in this dir.
+                       // Move to next starting configuration (i) or next direction.
             }
         }
     }
     board[r][c] = EMPTY; // Revert
-    return fourCount;
+    return fourCount; // Returns count of *extendable* fours
 }
 
 /**
@@ -638,9 +725,26 @@ function checkThreeFour(board, r, c, player) {
                     if (!isInBounds(cC, cR) || board[cR][cC] !== player) { is4 = false; break; }
                 }
                 if (is4) {
-                    fourDirections.push(nDir);
-                    chk4L.push(dKey);
-                    break;
+                    // Found a 4-in-a-row starting at sR, sC in direction dir (which is nDir when normalized).
+                    // Now check if it's extendable to five.
+                    const r_before_four = sR - dir.dr;
+                    const c_before_four = sC - dir.dc;
+                    const r_after_four = sR + 4 * dir.dr;
+                    const c_after_four = sC + 4 * dir.dc;
+
+                    let extendableFour = false;
+                    if (isInBounds(c_before_four, r_before_four) && board[r_before_four][c_before_four] === EMPTY) {
+                        extendableFour = true;
+                    }
+                    if (!extendableFour && isInBounds(c_after_four, r_after_four) && board[r_after_four][c_after_four] === EMPTY) {
+                        extendableFour = true;
+                    }
+
+                    if (extendableFour) {
+                        fourDirections.push(nDir);
+                        chk4L.push(dKey);
+                    }
+                    break; // Break from 'i' loop (offsets), found a 4-line (extendable or not) in this dir
                 }
             }
         }
