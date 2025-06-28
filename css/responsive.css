@@ -24,10 +24,12 @@
     #game-info {
         margin-top: 0;
         margin-left: 20px;
-        writing-mode: vertical-rl; /* Example: if info is to be displayed vertically */
-        text-orientation: mixed;
-        min-height: auto;
-        min-width: 50px; /* Adjust as needed */
+        /* Removed writing-mode and text-orientation to keep text horizontal */
+        min-height: auto; /* Reset from any vertical settings */
+        min-width: auto; /* Allow it to take content width or be styled by #controls-panel */
+        width: 100%; /* Make it take the full width of its column in controls-panel if panel is narrow */
+        max-width: 450px; /* Align with typical board width, consistent with #controls-panel */
+        text-align: center; /* Ensure text is centered, inheriting from style.css or explicitly setting */
     }
 }
 

@@ -15,6 +15,19 @@ const GAME_STATE_PAUSED = 'paused';     // Game is paused (e.g., AI thinking, mo
 // --- Game Logic Constants ---
 const WINNING_LENGTH = 5; // Number of stones in a row to win
 
+// --- Omniscience Pattern Type Constants ---
+const PATTERN_TYPE_FIVE_IN_A_ROW = 'five_in_a_row';
+const PATTERN_TYPE_LINE_OF_FOUR = 'line_of_four';
+const PATTERN_TYPE_DOUBLE_THREE = 'double_three';
+const PATTERN_TYPE_THREE_FOUR = 'three_four';
+const PATTERN_TYPE_DOUBLE_FOUR = 'double_four';
+// Add more specific types if needed, e.g., live three, sleep three, etc.
+
+// --- Omniscience Hint Category Constants ---
+const HINT_TYPE_PLAYER_OPPORTUNITY = 'player_opportunity';
+const HINT_TYPE_OPPONENT_THREAT = 'opponent_threat';
+
+
 // --- AI Related Constants (can be expanded in ai.js) ---
 // Example: const MAX_SEARCH_DEPTH = 5;
 
@@ -64,10 +77,21 @@ function getCanvasRelativePos(canvas, evt) {
     const rect = canvas.getBoundingClientRect();
     let clientX, clientY;
 
-    if (evt.touches && evt.touches.length > 0) {
-        clientX = evt.touches[0].clientX;
-        clientY = evt.touches[0].clientY;
-    } else {
+    if (evt.type.startsWith('touch')) { // Check if it's a touch event
+        if (evt.changedTouches && evt.changedTouches.length > 0) {
+            // For touchend, changedTouches is more reliable. For touchstart/move, touches is fine.
+            clientX = evt.changedTouches[0].clientX;
+            clientY = evt.changedTouches[0].clientY;
+        } else if (evt.touches && evt.touches.length > 0) {
+            // Fallback for other touch events if changedTouches isn't primary (e.g. touchstart)
+            clientX = evt.touches[0].clientX;
+            clientY = evt.touches[0].clientY;
+        } else {
+            // Should not happen if it's a touch event and we have touches/changedTouches
+            console.warn("Touch event detected but no touch points found in touches or changedTouches.");
+            return { x: -1, y: -1 }; // Indicate error
+        }
+    } else { // Mouse event
         clientX = evt.clientX;
         clientY = evt.clientY;
     }
@@ -107,5 +131,40 @@ function getRandomInt(min, max) {
     return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-console.log("utils.js loaded with enhanced utilities.");
+// --- Canvas Drawing Helper ---
+/**
+ * Adds a roundRect method to CanvasRenderingContext2D.
+ * Draws a rectangle with rounded corners.
+ * @param {number} x The top left x coordinate
+ * @param {number} y The top left y coordinate
+ * @param {number} width The width of the rectangle
+ * @param {number} height The height of the rectangle
+ * @param {number | {tl: number, tr: number, br: number, bl: number}} radius The corner radius.
+ * Can be a single number for all corners, or an object specifying individual radii.
+ */
+if (typeof CanvasRenderingContext2D !== 'undefined' && CanvasRenderingContext2D.prototype) {
+    CanvasRenderingContext2D.prototype.roundRect = function (x, y, width, height, radius) {
+        if (typeof radius === 'number') {
+            radius = { tl: radius, tr: radius, br: radius, bl: radius };
+        } else {
+            const defaultRadius = { tl: 0, tr: 0, br: 0, bl: 0 };
+            for (const side in defaultRadius) {
+                radius[side] = radius[side] || defaultRadius[side];
+            }
+        }
+        this.beginPath();
+        this.moveTo(x + radius.tl, y);
+        this.lineTo(x + width - radius.tr, y);
+        this.quadraticCurveTo(x + width, y, x + width, y + radius.tr);
+        this.lineTo(x + width, y + height - radius.br);
+        this.quadraticCurveTo(x + width, y + height, x + width - radius.br, y + height);
+        this.lineTo(x + radius.bl, y + height);
+        this.quadraticCurveTo(x, y + height, x, y + height - radius.bl);
+        this.lineTo(x, y + radius.tl);
+        this.quadraticCurveTo(x, y, x + radius.tl, y);
+        this.closePath();
+    };
+}
+
+console.log("utils.js loaded with enhanced utilities and CanvasRenderingContext2D.roundRect polyfill.");
 

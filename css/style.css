@@ -110,3 +110,81 @@ body {
     margin-right: 5px;
 }
 
+/* Modals */
+.modal {
+    display: none; /* Hidden by default, use .active to show */
+    position: fixed; /* Stay in place */
+    z-index: 1000; /* Sit on top */
+    left: 0;
+    top: 0;
+    width: 100%; /* Full width */
+    height: 100%; /* Full height */
+    overflow: auto; /* Enable scroll if needed */
+    background-color: rgba(0,0,0,0.5); /* Black w/ opacity */
+    /* Flexbox for centering modal content */
+    justify-content: center;
+    align-items: center;
+}
+
+.modal.active {
+    display: flex; /* Show the modal */
+}
+
+.modal-content {
+    background-color: #fefefe;
+    margin: auto; /* Given flex centering, margin auto is less critical but fine */
+    padding: 25px;
+    border: 1px solid #bbb;
+    width: 80%;
+    max-width: 400px;
+    border-radius: 10px;
+    text-align: center;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.15), 0 6px 10px rgba(0,0,0,0.12);
+    color: #333; /* Default text color for modal content */
+}
+
+.modal-content p {
+    font-size: 1.1em;
+    line-height: 1.6;
+    margin-top: 0; /* Remove default top margin for p in modal */
+    margin-bottom: 20px;
+}
+
+.modal-buttons {
+    display: flex;
+    justify-content: space-around;
+    margin-top: 20px;
+}
+
+.modal-buttons button,
+#modal-close-btn {
+    padding: 10px 20px;
+    border-radius: 6px;
+    border: 1px solid transparent; /* Base border */
+    font-size: 1em;
+    cursor: pointer;
+    min-width: 90px; /* Ensure buttons have a decent width */
+    transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+#modal-close-btn,
+#confirm-modal-no-btn {
+    background-color: #f0f0f0;
+    border-color: #ccc;
+    color: #333;
+}
+#modal-close-btn:hover,
+#confirm-modal-no-btn:hover {
+    background-color: #e0e0e0;
+    border-color: #bbb;
+}
+
+#confirm-modal-yes-btn {
+    background-color: #007bff;
+    color: white;
+    border-color: #007bff;
+}
+#confirm-modal-yes-btn:hover {
+    background-color: #0056b3;
+    border-color: #0056b3;
+}

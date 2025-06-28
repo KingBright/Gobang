@@ -18,8 +18,15 @@ window.onload = () => {
     }
     gameApi = window.gameApi;
     uiApi = window.uiApi;
-    // When ai.js exposes window.aiApi, it will be assigned here.
-    // For now, parts of the code will check if window.aiApi is available before using it.
+    // Assign aiApi if available
+    if (window.aiApi) {
+        aiApi = window.aiApi;
+        console.log("Main.js: aiApi successfully loaded.");
+    } else {
+        console.warn("Main.js: window.aiApi not found at onload. AI functionality might be limited until it loads or if not exposed correctly.");
+        // The application will still try to use window.aiApi directly where needed,
+        // relying on script load order. This local aiApi is for consistency if used.
+    }
 
     // Initialize UI (which also handles initial canvas sizing and drawing)
     uiApi.initUI(); 
@@ -53,9 +60,12 @@ function setupControlListeners() {
     if (aiDifficultySelect) {
         // Populate AI difficulty options
         // These levels correspond to depths in ai.js's AI_DIFFICULTY_LEVELS
-        const difficultyOptions = { 
-            1: "Novice (Depth 1)", 2: "Beginner (Depth 2)", 3: "Intermediate (Depth 3)", 
-            4: "Advanced (Depth 4)", 5: "Expert (Depth 5)" 
+        const difficultyOptions = {
+            1: "新手 (深度 1)", // Novice (Depth 1)
+            2: "入门 (深度 2)", // Beginner (Depth 2)
+            3: "中级 (深度 3)", // Intermediate (Depth 3)
+            4: "高级 (深度 4)", // Advanced (Depth 4)
+            5: "专家 (深度 5)"  // Expert (Depth 5)
         };
         let defaultAiLevel = 3; // Default to Intermediate
 
@@ -103,7 +113,23 @@ function handleNewGame() {
     if (window.aiApi && window.aiApi.resetAi) { // If AI needs a reset
         window.aiApi.resetAi();
     }
-    uiApi.drawGame();   
+
+    // Clear omniscient mode indicator if it exists
+    const omniscientIndicator = document.getElementById('omniscient-mode-indicator');
+    if (omniscientIndicator) {
+        omniscientIndicator.remove();
+    }
+
+    // Reset the omniscience mode toggle and internal state
+    const omniscienceToggle = document.getElementById('omniscience-mode');
+    if (omniscienceToggle && omniscienceToggle.checked) {
+        omniscienceToggle.checked = false; // Visually uncheck the toggle
+        if (uiApi && uiApi.toggleOmniscienceMode) { // Ensure uiApi and function exist
+            uiApi.toggleOmniscienceMode(false); // Update internal state and trigger related UI changes (like removing hints)
+        }
+    }
+
+    uiApi.drawGame();   // This will redraw the board, and with omniscience mode off, hints won't be drawn.
 }
 
 function handleUndo() {
@@ -138,6 +164,10 @@ function handleUndo() {
     }
     
     uiApi.drawGame(); // Redraw after undo
+    // NEW: Trigger omniscience update after general undo
+    if (uiApi.triggerOmniscienceUpdateIfActive) {
+        uiApi.triggerOmniscienceUpdateIfActive();
+    }
 }
 
 
@@ -153,8 +183,23 @@ window.handleHumanMove = function(x, y) {
     if (moveSuccessful) {
         uiApi.drawGame(); 
 
+        // Trigger omniscience update if active, after player's move is drawn
+        if (uiApi.triggerOmniscienceUpdateIfActive) {
+            uiApi.triggerOmniscienceUpdateIfActive();
+        }
+
         if (gameApi.getGameState() === GAME_STATE_ENDED) {
             console.log("Main.js: Game ended after human move.");
+            let endMessage = "游戏结束!"; // Default Game Over!
+            const history = gameApi.getMoveHistory();
+            const lastPlayerMove = history.length > 0 ? history[history.length - 1] : null;
+
+            if (lastPlayerMove && gameApi.checkWin(lastPlayerMove.x, lastPlayerMove.y)) {
+                endMessage = `玩家 ${lastPlayerMove.player === PLAYER_BLACK ? '黑棋' : '白棋'} 胜利!`;
+            } else if (history.length === (BOARD_SIZE * BOARD_SIZE)) { // Check against BOARD_SIZE from utils.js if possible, or ensure consistency
+                endMessage = "平局!";
+            }
+            if (uiApi.showGameMessageModal) uiApi.showGameMessageModal(endMessage);
             return; 
         }
 
@@ -185,6 +230,10 @@ window.handleHumanMove = function(x, y) {
                     gameApi.undoMove(); // Undoes player's last move
                     gameApi.setGameState(GAME_STATE_PLAYING); // Resume
                     uiApi.drawGame(); // Redraw, player can move again
+                    // NEW: Trigger omniscience update after undo
+                    if (uiApi.triggerOmniscienceUpdateIfActive) {
+                        uiApi.triggerOmniscienceUpdateIfActive();
+                    }
                 }
             );
         } else {
@@ -210,7 +259,11 @@ function proceedToAiTurn() {
             gameApi.setGameState(GAME_STATE_PLAYING); 
             gameApi.setCurrentPlayer(PLAYER_BLACK); 
             uiApi.drawGame();
-            alert("Error: AI module is not available. Your turn again.");
+            if (window.uiApi && uiApi.showGameMessageModal) {
+                uiApi.showGameMessageModal("错误: AI模块不可用。请您继续。");
+            } else {
+                alert("错误: AI模块不可用。请您继续。"); // Fallback
+            }
             return;
         }
         // Ensure game hasn't been reset or ended while "thinking"
@@ -223,30 +276,74 @@ function proceedToAiTurn() {
         }
 
         const currentBoardForAI = gameApi.getBoard();
-        const aiMove = window.aiApi.aiMakeMove(currentBoardForAI); 
 
-        if (aiMove) { 
-            const aiMoveSuccessful = gameApi.makeMove(aiMove.x, aiMove.y); 
+        window.aiApi.aiMakeMove(currentBoardForAI)
+            .then(aiMove => {
+                if (aiMove) {
+                    // Ensure game is still in a state to make an AI move (e.g. not reset by user)
+                    // This check is similar to the one at the start of the setTimeout
+                    if(gameApi.getGameState() !== GAME_STATE_PAUSED || gameApi.getCurrentPlayer() !== PLAYER_WHITE) {
+                        console.log("Main.js: Game state changed during AI worker computation. Aborting AI move.");
+                        if(gameApi.getGameState() === GAME_STATE_PAUSED) gameApi.setGameState(GAME_STATE_PLAYING);
+                        uiApi.drawGame();
+                        return;
+                    }
 
-            if (aiMoveSuccessful) {
-                gameApi.setGameState(GAME_STATE_PLAYING); 
-                uiApi.drawGame(); 
-                if (gameApi.getGameState() === GAME_STATE_ENDED) {
-                    console.log("Main.js: Game ended after AI move.");
-                } else {
-                    gameApi.setCurrentPlayer(PLAYER_BLACK);
-                    uiApi.drawGame(); 
+                    gameApi.setGameState(GAME_STATE_PLAYING); // Set to PLAYING before AI makes its actual move
+                    const aiMoveSuccessful = gameApi.makeMove(aiMove.x, aiMove.y);
+
+                    if (aiMoveSuccessful) {
+                        uiApi.drawGame(); // Draw AI's move
+
+                        // Trigger omniscience update if active, after AI's move is drawn
+                        if (uiApi.triggerOmniscienceUpdateIfActive) {
+                            uiApi.triggerOmniscienceUpdateIfActive();
+                        }
+
+                        if (gameApi.getGameState() === GAME_STATE_ENDED) {
+                            console.log("Main.js: Game ended after AI move.");
+                            let endMessage = "游戏结束!";
+                            const history = gameApi.getMoveHistory();
+                            const lastPlayerMove = history.length > 0 ? history[history.length - 1] : null;
+                            if (lastPlayerMove && gameApi.checkWin(lastPlayerMove.x, lastPlayerMove.y)) {
+                                endMessage = `玩家 ${lastPlayerMove.player === PLAYER_BLACK ? '黑棋' : '白棋'} 胜利!`;
+                            } else if (history.length === (BOARD_SIZE * BOARD_SIZE)) {
+                                endMessage = "平局!";
+                            }
+                            if (uiApi.showGameMessageModal) uiApi.showGameMessageModal(endMessage);
+                        } else {
+                            gameApi.setCurrentPlayer(PLAYER_BLACK);
+                            // uiApi.drawGame(); // Drawing is already done, and message update is part of it.
+                                               // If setCurrentPlayer or game message needs specific update, it's handled by drawGame.
+                                               // No need for an immediate second drawGame unless state change for message is critical before next player input.
+                                               // The existing uiApi.drawGame() after setCurrentPlayer will update the message for "Black's turn".
+                                               // The hint update above will also trigger a drawGame.
+                                               // To avoid multiple rapid drawGame calls, let's ensure the final drawGame in this block is sufficient.
+                            uiApi.drawGame(); // This will refresh the game message to "Black's turn"
+                        }
+                    } else {
+                        console.error("Main.js Error: AI made an invalid move:", aiMove);
+                        handleAiError("AI尝试了无效的走法。");
+                    }
+                } else { // aiMove is null
+                    console.log("Main.js: AI has no move (board full or error in AI worker).");
+                    if (gameApi.getGameState() !== GAME_STATE_ENDED) {
+                        // Ensure game state is reset from PAUSED if AI had no move
+                        if(gameApi.getGameState() === GAME_STATE_PAUSED) gameApi.setGameState(GAME_STATE_PLAYING);
+                        gameApi.setCurrentPlayer(PLAYER_BLACK); // Give turn back to player
+                        handleAiError("AI无法确定走法。");
+                    } else {
+                         uiApi.drawGame(); // Game already ended (e.g. draw by board full)
+                    }
                 }
-            } else {
-                console.error("Main.js Error: AI made an invalid move:", aiMove);
-                handleAiError("AI attempted an invalid move.");
-            }
-        } else {
-            console.log("Main.js: AI has no move (board full or error in AI).");
-            if (gameApi.getGameState() !== GAME_STATE_ENDED) {
-                 handleAiError("AI could not determine a move.");
-            }
-        }
+            })
+            .catch(error => {
+                console.error("Main.js Error: AI move promise rejected:", error);
+                // Ensure game state is reset from PAUSED
+                if(gameApi.getGameState() === GAME_STATE_PAUSED) gameApi.setGameState(GAME_STATE_PLAYING);
+                gameApi.setCurrentPlayer(PLAYER_BLACK); // Give turn back to player in case of AI error
+                handleAiError(`AI计算出错: ${error.message}`);
+            });
     }, 100); 
 }
 
@@ -255,7 +352,12 @@ function handleAiError(message) {
     gameApi.setGameState(GAME_STATE_PLAYING); // Revert state
     gameApi.setCurrentPlayer(PLAYER_BLACK); // Give turn back to player
     uiApi.drawGame();
-    alert(`AI Error: ${message} Your turn again.`);
+    // Use custom modal for AI errors
+    if (uiApi.showGameMessageModal) {
+        uiApi.showGameMessageModal(`AI错误: ${message} 请您继续。`);
+    } else {
+        alert(`AI错误: ${message} 请您继续。`); // Fallback
+    }
 }
 
 console.log("main.js loaded. Waiting for window.onload to initialize.");
