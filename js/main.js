@@ -32,19 +32,37 @@ window.onload = () => {
     uiApi.initUI(); 
 
     // Initialize Game Logic (board, state, etc.)
-    gameApi.initGame(); 
+    // gameApi.initGame(); // Will be called by handleNewGame or setup, with player choice
+    // No, it's better to initialize it here once, then handleNewGame can re-initialize.
+    // Default to human as PLAYER_BLACK for the very first game load.
+    gameApi.initGame(PLAYER_BLACK);
+
 
     // Setup Control Buttons from index.html
-    setupControlListeners();
+    setupControlListeners(); // This will also call handleNewGame for the first setup if we want.
+                             // For now, explicit initGame above and explicit drawGame below.
 
     // Initial draw of the game board and state
     uiApi.drawGame(); 
+
+    // If human chose white for the very first game (not typical, as selection happens on "New Game")
+    // This logic is more for subsequent new games.
+    // For initial load, human is Black by default in gameApi.initGame(PLAYER_BLACK).
+    // const humanIsWhite = gameApi.getHumanPlayer() === PLAYER_WHITE;
+    // if (humanIsWhite && gameApi.getCurrentPlayer() === PLAYER_BLACK && gameApi.getMoveHistory().length === 0) {
+    //     console.log("Main.js: Initial load, human is White. AI (Black) makes the first move.");
+    //     proceedToAiTurn();
+    // }
+
 
     console.log("Main.js: Game setup complete. Application is running.");
 };
 
 function setupControlListeners() {
     const newGameBtn = document.getElementById('new-game-btn');
+    // Player color selectors
+    const selectBlackRadio = document.getElementById('select-black');
+    const selectWhiteRadio = document.getElementById('select-white');
     const undoBtn = document.getElementById('undo-btn');
     const aiDifficultySelect = document.getElementById('ai-difficulty');
     const omniscienceToggle = document.getElementById('omniscience-mode');
@@ -109,7 +127,13 @@ function setupControlListeners() {
 // --- Control Event Handlers ---
 function handleNewGame() {
     console.log("Main.js: New Game requested.");
-    gameApi.initGame(); 
+
+    // Determine player's chosen color
+    const selectWhiteRadio = document.getElementById('select-white');
+    const humanPlayerRole = selectWhiteRadio && selectWhiteRadio.checked ? PLAYER_WHITE : PLAYER_BLACK;
+    console.log(`Main.js: Human player chose to be ${humanPlayerRole === PLAYER_BLACK ? 'Black (First)' : 'White (Second)'}.`);
+
+    gameApi.initGame(humanPlayerRole);
     if (window.aiApi && window.aiApi.resetAi) { // If AI needs a reset
         window.aiApi.resetAi();
     }
@@ -130,6 +154,18 @@ function handleNewGame() {
     }
 
     uiApi.drawGame();   // This will redraw the board, and with omniscience mode off, hints won't be drawn.
+
+    // If human chose White, AI (Black) makes the first move.
+    // gameApi.getCurrentPlayer() will be PLAYER_BLACK because black always starts.
+    // gameApi.getMoveHistory().length will be 0.
+    if (gameApi.getHumanPlayer() === PLAYER_WHITE &&
+        gameApi.getCurrentPlayer() === PLAYER_BLACK &&
+        gameApi.getMoveHistory().length === 0) {
+        console.log("Main.js: Human chose White. AI (Black) makes the first move.");
+        // Ensure game state is appropriate for AI to start
+        gameApi.setGameState(GAME_STATE_PLAYING); // Should already be this from initGame
+        proceedToAiTurn();
+    }
 }
 
 function handleUndo() {
@@ -143,25 +179,24 @@ function handleUndo() {
     // Undo player's move. If AI played just before player's current turn, undo AI's move too.
     // The design is: "弹出AI和玩家的最近一步棋"
     const lastMove = history[history.length - 1];
+    const humanPlayer = gameApi.getHumanPlayer();
+    const aiPlayer = humanPlayer === PLAYER_BLACK ? PLAYER_WHITE : PLAYER_BLACK;
     
-    gameApi.undoMove(); // Undo the topmost move (could be AI's or Player's previous if they are undoing before AI plays)
+    gameApi.undoMove(); // Undo the topmost move (could be AI's or Player's)
     
-    // If the undone move was by AI (PLAYER_WHITE), and there's another move in history,
-    // it must be the player's (PLAYER_BLACK) move that preceded AI's. So, undo that too.
-    if (lastMove.player === PLAYER_WHITE && gameApi.getMoveHistory().length > 0) {
+    // If the undone move was by AI, and there's another move in history,
+    // it must be the player's move that preceded AI's. So, undo that too.
+    if (lastMove.player === aiPlayer && gameApi.getMoveHistory().length > 0) {
         const moveBeforeAi = gameApi.getMoveHistory()[gameApi.getMoveHistory().length -1];
-        if(moveBeforeAi.player === PLAYER_BLACK) { // Ensure it's player's move
-             gameApi.undoMove(); // Undo player's move
+        // Ensure the move before AI's was indeed by the human player
+        if(moveBeforeAi.player === humanPlayer) {
+             gameApi.undoMove(); // Undo human player's move
         }
     }
+
     // After undo(s), currentPlayer is set by gameApi.undoMove to the player of the last undone move.
-    // So it should be PLAYER_BLACK's turn.
-    // If it's not (e.g. only one move was on stack by black), gameApi.setCurrentPlayer might be needed
-    // but gameApi.undoMove already sets currentPlayer = lastMove.player.
-    // If the final state after undo is not PLAYER_BLACK's turn, explicitly set it.
-    if(gameApi.getCurrentPlayer() !== PLAYER_BLACK) {
-        gameApi.setCurrentPlayer(PLAYER_BLACK);
-    }
+    // We want to ensure it's now the human player's turn to make a move.
+    gameApi.setCurrentPlayer(humanPlayer);
     
     uiApi.drawGame(); // Redraw after undo
     // NEW: Trigger omniscience update after general undo
@@ -173,8 +208,13 @@ function handleUndo() {
 
 // --- Game Flow Management ---
 window.handleHumanMove = function(x, y) {
-    if (!gameApi || gameApi.getGameState() !== GAME_STATE_PLAYING || gameApi.getCurrentPlayer() !== PLAYER_BLACK) {
-        console.log("Main.js: Human move ignored - not player's turn (PLAYER_BLACK) or game not active.");
+    if (!gameApi || !gameApi.getHumanPlayer) { // Ensure gameApi and getHumanPlayer are loaded
+        console.error("Main.js: gameApi or gameApi.getHumanPlayer not available.");
+        return;
+    }
+    const humanPlayer = gameApi.getHumanPlayer();
+    if (gameApi.getGameState() !== GAME_STATE_PLAYING || gameApi.getCurrentPlayer() !== humanPlayer) {
+        console.log(`Main.js: Human move ignored - not player's turn (current: ${gameApi.getCurrentPlayer()}, human: ${humanPlayer}) or game not active.`);
         return;
     }
 
@@ -245,19 +285,24 @@ window.handleHumanMove = function(x, y) {
 };
 
 function proceedToAiTurn() {
-    if (!gameApi || gameApi.getGameState() === GAME_STATE_ENDED) return;
+    if (!gameApi || gameApi.getGameState() === GAME_STATE_ENDED || !gameApi.getHumanPlayer) return;
 
-    gameApi.setCurrentPlayer(PLAYER_WHITE);
+    const humanPlayer = gameApi.getHumanPlayer();
+    const aiPlayerColor = humanPlayer === PLAYER_BLACK ? PLAYER_WHITE : PLAYER_BLACK;
+
+    // It's crucial that gameApi.getCurrentPlayer() is the AI's color *before* AI makes a move.
+    // gameApi.makeMove uses gameApi.getCurrentPlayer() to record the move.
+    gameApi.setCurrentPlayer(aiPlayerColor);
     gameApi.setGameState(GAME_STATE_PAUSED); // Indicate AI is thinking
-    uiApi.drawGame(); // Update UI to show "AI is thinking..."
+    uiApi.drawGame(); // Update UI to show "AI is thinking..." for the correct AI color
 
-    console.log("Main.js: AI's turn (PLAYER_WHITE). Triggering AI move...");
+    console.log(`Main.js: AI's turn (Player ${aiPlayerColor}). Triggering AI move...`);
     
     setTimeout(() => {
         if (!window.aiApi || !window.aiApi.aiMakeMove) {
             console.error("Main.js Error: aiApi or aiMakeMove not available. AI cannot make a move.");
             gameApi.setGameState(GAME_STATE_PLAYING); 
-            gameApi.setCurrentPlayer(PLAYER_BLACK); 
+            gameApi.setCurrentPlayer(humanPlayer); // Turn back to human
             uiApi.drawGame();
             if (window.uiApi && uiApi.showGameMessageModal) {
                 uiApi.showGameMessageModal("错误: AI模块不可用。请您继续。");
@@ -267,8 +312,10 @@ function proceedToAiTurn() {
             return;
         }
         // Ensure game hasn't been reset or ended while "thinking"
-        if(gameApi.getGameState() !== GAME_STATE_PAUSED || gameApi.getCurrentPlayer() !== PLAYER_WHITE) {
-            console.log("Main.js: Game state changed during AI thinking. Aborting AI move.");
+        // And ensure it's still supposed to be AI's turn with the correct color
+        const currentAiPlayerColor = gameApi.getHumanPlayer() === PLAYER_BLACK ? PLAYER_WHITE : PLAYER_BLACK;
+        if(gameApi.getGameState() !== GAME_STATE_PAUSED || gameApi.getCurrentPlayer() !== currentAiPlayerColor) {
+            console.log(`Main.js: Game state changed during AI thinking (State: ${gameApi.getGameState()}, CurrentPlayer: ${gameApi.getCurrentPlayer()}, Expected AI: ${currentAiPlayerColor}). Aborting AI move.`);
             // Ensure state is consistent if it was paused by this flow
             if(gameApi.getGameState() === GAME_STATE_PAUSED) gameApi.setGameState(GAME_STATE_PLAYING);
             uiApi.drawGame();
@@ -280,16 +327,18 @@ function proceedToAiTurn() {
         window.aiApi.aiMakeMove(currentBoardForAI)
             .then(aiMove => {
                 if (aiMove) {
+                    const stillAiTurnColor = gameApi.getHumanPlayer() === PLAYER_BLACK ? PLAYER_WHITE : PLAYER_BLACK;
                     // Ensure game is still in a state to make an AI move (e.g. not reset by user)
                     // This check is similar to the one at the start of the setTimeout
-                    if(gameApi.getGameState() !== GAME_STATE_PAUSED || gameApi.getCurrentPlayer() !== PLAYER_WHITE) {
-                        console.log("Main.js: Game state changed during AI worker computation. Aborting AI move.");
+                    if(gameApi.getGameState() !== GAME_STATE_PAUSED || gameApi.getCurrentPlayer() !== stillAiTurnColor) {
+                        console.log(`Main.js: Game state changed during AI worker computation (State: ${gameApi.getGameState()}, CurrentPlayer: ${gameApi.getCurrentPlayer()}, Expected AI: ${stillAiTurnColor}). Aborting AI move.`);
                         if(gameApi.getGameState() === GAME_STATE_PAUSED) gameApi.setGameState(GAME_STATE_PLAYING);
                         uiApi.drawGame();
                         return;
                     }
 
                     gameApi.setGameState(GAME_STATE_PLAYING); // Set to PLAYING before AI makes its actual move
+                    // gameApi.makeMove uses gameApi.getCurrentPlayer(), which should be aiPlayerColor set at the start of proceedToAiTurn
                     const aiMoveSuccessful = gameApi.makeMove(aiMove.x, aiMove.y);
 
                     if (aiMoveSuccessful) {
@@ -312,26 +361,22 @@ function proceedToAiTurn() {
                             }
                             if (uiApi.showGameMessageModal) uiApi.showGameMessageModal(endMessage);
                         } else {
-                            gameApi.setCurrentPlayer(PLAYER_BLACK);
-                            // uiApi.drawGame(); // Drawing is already done, and message update is part of it.
-                                               // If setCurrentPlayer or game message needs specific update, it's handled by drawGame.
-                                               // No need for an immediate second drawGame unless state change for message is critical before next player input.
-                                               // The existing uiApi.drawGame() after setCurrentPlayer will update the message for "Black's turn".
-                                               // The hint update above will also trigger a drawGame.
-                                               // To avoid multiple rapid drawGame calls, let's ensure the final drawGame in this block is sufficient.
-                            uiApi.drawGame(); // This will refresh the game message to "Black's turn"
+                            // Game continues, set current player to human
+                            const humanPlayer = gameApi.getHumanPlayer();
+                            gameApi.setCurrentPlayer(humanPlayer);
+                            uiApi.drawGame(); // This will refresh the game message to human's turn
                         }
                     } else {
                         console.error("Main.js Error: AI made an invalid move:", aiMove);
-                        handleAiError("AI尝试了无效的走法。");
+                        handleAiError("AI尝试了无效的走法。"); // handleAiError will set turn back to human
                     }
                 } else { // aiMove is null
                     console.log("Main.js: AI has no move (board full or error in AI worker).");
                     if (gameApi.getGameState() !== GAME_STATE_ENDED) {
-                        // Ensure game state is reset from PAUSED if AI had no move
                         if(gameApi.getGameState() === GAME_STATE_PAUSED) gameApi.setGameState(GAME_STATE_PLAYING);
-                        gameApi.setCurrentPlayer(PLAYER_BLACK); // Give turn back to player
-                        handleAiError("AI无法确定走法。");
+                        const humanPlayer = gameApi.getHumanPlayer();
+                        gameApi.setCurrentPlayer(humanPlayer); // Give turn back to player
+                        handleAiError("AI无法确定走法。"); // This will also call drawGame
                     } else {
                          uiApi.drawGame(); // Game already ended (e.g. draw by board full)
                     }
@@ -339,18 +384,19 @@ function proceedToAiTurn() {
             })
             .catch(error => {
                 console.error("Main.js Error: AI move promise rejected:", error);
-                // Ensure game state is reset from PAUSED
                 if(gameApi.getGameState() === GAME_STATE_PAUSED) gameApi.setGameState(GAME_STATE_PLAYING);
-                gameApi.setCurrentPlayer(PLAYER_BLACK); // Give turn back to player in case of AI error
-                handleAiError(`AI计算出错: ${error.message}`);
+                const humanPlayer = gameApi.getHumanPlayer();
+                gameApi.setCurrentPlayer(humanPlayer); // Give turn back to player in case of AI error
+                handleAiError(`AI计算出错: ${error.message}`); // This will also call drawGame
             });
     }, 100); 
 }
 
 function handleAiError(message) {
-    if (!gameApi || !uiApi) return;
+    if (!gameApi || !uiApi || !gameApi.getHumanPlayer) return;
+    const humanPlayer = gameApi.getHumanPlayer();
     gameApi.setGameState(GAME_STATE_PLAYING); // Revert state
-    gameApi.setCurrentPlayer(PLAYER_BLACK); // Give turn back to player
+    gameApi.setCurrentPlayer(humanPlayer); // Give turn back to player
     uiApi.drawGame();
     // Use custom modal for AI errors
     if (uiApi.showGameMessageModal) {

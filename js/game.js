@@ -3,19 +3,29 @@
 // --- Module-scoped State Variables ---
 let board = [];
 let currentPlayer = PLAYER_BLACK; // Black (human) typically starts
+let humanPlayer = PLAYER_BLACK;   // Stores the color chosen by the human player
 let gameState = GAME_STATE_IDLE;  // Initial state
 let moveHistory = [];             // Stack of moves: {x, y, player}
 
 // --- Game Initialization and Reset ---
 /**
  * Initializes or resets the game to its starting state.
+ * @param {number} humanPlayerRole - The role chosen by the human player (PLAYER_BLACK or PLAYER_WHITE).
  */
-function initGameInternal() { // Renamed to avoid conflict if initGame is globally exposed differently
+function initGameInternal(humanPlayerRole) {
     board = Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill(EMPTY));
-    currentPlayer = PLAYER_BLACK; // Black always starts
+
+    if (humanPlayerRole === PLAYER_BLACK || humanPlayerRole === PLAYER_WHITE) {
+        humanPlayer = humanPlayerRole;
+    } else {
+        console.warn(`Invalid humanPlayerRole '${humanPlayerRole}' in initGame. Defaulting to PLAYER_BLACK.`);
+        humanPlayer = PLAYER_BLACK;
+    }
+
+    currentPlayer = PLAYER_BLACK; // Black always makes the first move.
     gameState = GAME_STATE_PLAYING;
     moveHistory = [];
-    console.log("Game initialized. Player Black's turn.");
+    console.log(`Game initialized. Human player is ${humanPlayer === PLAYER_BLACK ? 'Black' : 'White'}. Current turn: Player Black.`);
 }
 
 // --- Core Game Actions ---
@@ -116,6 +126,7 @@ function getBoardInternal() { return deepCopyBoard(board); } // deepCopyBoard fr
 function getCurrentPlayerInternal() { return currentPlayer; }
 function getGameStateInternal() { return gameState; }
 function getMoveHistoryInternal() { return [...moveHistory]; }
+function getHumanPlayerInternal() { return humanPlayer; } // Getter for humanPlayer
 
 // --- State Setters (internal names, for controlled modification) ---
 function setCurrentPlayerInternal(playerID) {
@@ -146,6 +157,7 @@ window.gameApi = {
     getCurrentPlayer: getCurrentPlayerInternal,
     getGameState: getGameStateInternal,
     getMoveHistory: getMoveHistoryInternal,
+    getHumanPlayer: getHumanPlayerInternal, // Expose the new getter
     setCurrentPlayer: setCurrentPlayerInternal,
     setGameState: setGameStateInternal,
     checkWin: checkWinInternal // Exposing checkWin for potential use by AI/UI for quick checks

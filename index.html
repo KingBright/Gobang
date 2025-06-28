@@ -14,6 +14,15 @@
         <div id="controls-panel">
             <div id="controls">
                 <button id="new-game-btn">新游戏</button>
+                <div class="control-group">
+                    <label>选择你的棋子:</label>
+                    <div id="player-color-selector">
+                        <input type="radio" id="select-black" name="player-color" value="black" checked>
+                        <label for="select-black">执黑 (先手)</label>
+                        <input type="radio" id="select-white" name="player-color" value="white">
+                        <label for="select-white">执白 (后手)</label>
+                    </div>
+                </div>
                 <button id="undo-btn">悔棋</button>
                 <div class="control-group">
                     <label for="ai-difficulty">AI等级:</label>
