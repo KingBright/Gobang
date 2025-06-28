@@ -301,6 +301,438 @@ function makeTemporaryMove(originalBoard, x, y, player) {
     return tempBoard;
 }
 
+// --- Advanced Pattern Detection for Omniscience ---
+
+/**
+ * Checks if placing a stone at (x,y) for player creates a line of 'length' stones.
+ * Optionally checks for open ends.
+ * @param {Array<Array<number>>} board The game board.
+ * @param {number} r Row index.
+ * @param {number} c Column index.
+ * @param {number} player The player making the move.
+ * @param {number} length The required length of the line.
+ * @param {boolean} [checkOpenStart=false] If true, checks if the start of the line is open.
+ * @param {boolean} [checkOpenEnd=false] If true, checks if the end of the line is open.
+ * @returns {boolean} True if the pattern is formed, false otherwise.
+ */
+function checkLine(board, r, c, player, length, checkOpenStart = false, checkOpenEnd = false) {
+    const directions = [
+        { dr: 0, dc: 1 }, { dr: 1, dc: 0 }, // Horizontal, Vertical
+        { dr: 1, dc: 1 }, { dr: 1, dc: -1 }  // Diagonal
+    ];
+
+    for (const dir of directions) {
+        // Check in one direction (e.g., right, down, down-right, down-left)
+        // Then check in the opposite direction and combine
+        for (let i = 0; i < length; i++) { // i is the number of stones *before* the current placement (r,c) along the line
+            const startR = r - i * dir.dr;
+            const startC = c - i * dir.dc;
+
+            let currentLength = 0;
+            let openEnds = 0;
+            let actualStones = []; // Store {r, c} of stones in the line
+
+            // Check towards dir
+            for (let k = 0; k < length; k++) {
+                const curR = startR + k * dir.dr;
+                const curC = startC + k * dir.dc;
+
+                if (!isInBounds(curC, curR)) break;
+                if (k === i && board[curR][curC] !== EMPTY && board[curR][curC] !== player) break; // The target spot must be empty or player's
+                if (k !== i && board[curR][curC] !== player) break; // Other spots must be player's
+
+                if (board[curR][curC] === player || (k === i && board[curR][curC] === EMPTY) ) {
+                     if (k===i) actualStones.push({r:curR, c:curC, isHypothetical:true}); // Mark the hypothetical stone
+                     else actualStones.push({r:curR, c:curC});
+                    currentLength++;
+                } else {
+                    break;
+                }
+            }
+
+            if (currentLength === length) {
+                let lineForms = true;
+                if (checkOpenStart || checkOpenEnd) {
+                    const beforeR = startR - dir.dr;
+                    const beforeC = startC - dir.dc;
+                    const afterR = startR + length * dir.dr;
+                    const afterC = startC + length * dir.dc;
+
+                    let isOpenStart = false;
+                    if (isInBounds(beforeC, beforeR) && board[beforeR][beforeC] === EMPTY) {
+                        isOpenStart = true;
+                    }
+
+                    let isOpenEnd = false;
+                    if (isInBounds(afterC, afterR) && board[afterR][afterC] === EMPTY) {
+                        isOpenEnd = true;
+                    }
+
+                    if (checkOpenStart && !isOpenStart) lineForms = false;
+                    if (checkOpenEnd && !isOpenEnd) lineForms = false;
+                }
+                if(lineForms) return true;
+            }
+        }
+    }
+    return false;
+}
+
+
+/**
+ * Checks if placing stone at (r,c) for player creates a five-in-a-row.
+ */
+function checkFive(board, r, c, player) {
+    // Temporarily place stone for check
+    board[r][c] = player;
+    let wins = false;
+    // Use existing checkWinForPlayer but adapt it if it checks the whole board
+    // For now, let's use a localized check around (r,c)
+    const directions = [{dx:1,dy:0},{dx:0,dy:1},{dx:1,dy:1},{dx:1,dy:-1}];
+    for (const dir of directions) {
+        let count = 1; // Count the stone we just placed
+        // Check in positive direction
+        for (let i = 1; i < WINNING_LENGTH; i++) {
+            const newR = r + i * dir.dy;
+            const newC = c + i * dir.dx;
+            if (isInBounds(newC, newR) && board[newR][newC] === player) count++; else break;
+        }
+        // Check in negative direction
+        for (let i = 1; i < WINNING_LENGTH; i++) {
+            const newR = r - i * dir.dy;
+            const newC = c - i * dir.dx;
+            if (isInBounds(newC, newR) && board[newR][newC] === player) count++; else break;
+        }
+        if (count >= WINNING_LENGTH) {
+            wins = true;
+            break;
+        }
+    }
+    board[r][c] = EMPTY; // Revert
+    return wins;
+}
+
+/**
+ * Checks if placing stone at (r,c) for player creates a line of four.
+ * This can be an open four or a closed four (where one end is blocked by opponent or edge).
+ * For omniscience, we just need to know if it *becomes* a four.
+ */
+function checkLineOfFour(board, r, c, player) {
+    board[r][c] = player;
+    let isFour = false;
+    const directions = [{dx:1,dy:0},{dx:0,dy:1},{dx:1,dy:1},{dx:1,dy:-1}];
+    for (const dir of directions) {
+        let count = 1;
+        for (let i = 1; i < 4; i++) { // Check up to 3 more stones in one dir
+            if (isInBounds(c + i * dir.dx, r + i * dir.dy) && board[r + i * dir.dy][c + i * dir.dx] === player) count++; else break;
+        }
+        for (let i = 1; i < 4; i++) { // Check up to 3 more stones in other dir
+            if (isInBounds(c - i * dir.dx, r - i * dir.dy) && board[r - i * dir.dy][c - i * dir.dx] === player) count++; else break;
+        }
+        if (count >= 4) { // If placing the stone makes it 4 or more (e.g. completing a 4, or extending a 3 to 4)
+            isFour = true;
+            break;
+        }
+    }
+    board[r][c] = EMPTY;
+    return isFour;
+}
+
+
+/**
+ * Counts open threes formed by placing a stone at (r,c) for player.
+ * An open three is X-O-O-O-X where O is player and X is empty.
+ * @returns {number} Count of distinct open threes formed.
+ */
+function countOpenThreesFormed(board, r, c, player) {
+    board[r][c] = player; // Place stone
+    let openThreeCount = 0;
+    const directions = [{ dr: 0, dc: 1 }, { dr: 1, dc: 0 }, { dr: 1, dc: 1 }, { dr: 1, dc: -1 }];
+    const checkedLines = []; // To avoid double counting for a line (e.g. horizontal line counted once)
+
+    for (const dir of directions) {
+        // Normalize direction to avoid duplicates (e.g. horizontal right and horizontal left)
+        const normDir = (dir.dc < 0 || (dir.dc === 0 && dir.dr < 0)) ? { dr: -dir.dr, dc: -dir.dc } : dir;
+        const dirKey = `${normDir.dr}_${normDir.dc}`;
+        if (checkedLines.includes(dirKey)) continue;
+
+        // Iterate through all possible 3-in-a-row patterns that include the new stone (r,c)
+        for (let i = 0; i < 3; i++) { // i is the offset of (r,c) within the potential 3-in-a-row
+            const sR = r - i * dir.dr; // Start row of the 3-group
+            const sC = c - i * dir.dc; // Start col of the 3-group
+
+            // Check if this forms a 3-in-a-row of 'player'
+            let isThreeInARow = true;
+            for (let k = 0; k < 3; k++) {
+                const curR = sR + k * dir.dr;
+                const curC = sC + k * dir.dc;
+                if (!isInBounds(curC, curR) || board[curR][curC] !== player) {
+                    isThreeInARow = false;
+                    break;
+                }
+            }
+
+            if (isThreeInARow) {
+                // Check for open ends: _OOO_
+                const beforeR = sR - dir.dr;
+                const beforeC = sC - dir.dc;
+                const afterR = sR + 3 * dir.dr;
+                const afterC = sC + 3 * dir.dc;
+
+                if (isInBounds(beforeC, beforeR) && board[beforeR][beforeC] === EMPTY &&
+                    isInBounds(afterC, afterR) && board[afterR][afterC] === EMPTY) {
+                    openThreeCount++;
+                    checkedLines.push(dirKey); // Mark this line direction as counted
+                    break; // Found an open three in this direction, move to next direction
+                }
+            }
+        }
+    }
+    board[r][c] = EMPTY; // Revert
+    return openThreeCount;
+}
+
+/**
+ * Checks for Double Three: placing a stone creates two open threes simultaneously.
+ */
+function checkDoubleThree(board, r, c, player) {
+    return countOpenThreesFormed(board, r, c, player) >= 2;
+}
+
+/**
+ * Counts fours (live or dead) formed by placing a stone at (r,c) for player.
+ * @returns {number} Count of distinct fours formed.
+ */
+function countFoursFormed(board, r, c, player) {
+    board[r][c] = player; // Place stone
+    let fourCount = 0;
+    const directions = [{ dr: 0, dc: 1 }, { dr: 1, dc: 0 }, { dr: 1, dc: 1 }, { dr: 1, dc: -1 }];
+    const checkedLines = [];
+
+    for (const dir of directions) {
+        const normDir = (dir.dc < 0 || (dir.dc === 0 && dir.dr < 0)) ? { dr: -dir.dr, dc: -dir.dc } : dir;
+        const dirKey = `${normDir.dr}_${normDir.dc}`;
+        if (checkedLines.includes(dirKey)) continue;
+
+        for (let i = 0; i < 4; i++) { // i is the offset of (r,c) within the potential 4-in-a-row
+            const sR = r - i * dir.dr;
+            const sC = c - i * dir.dc;
+
+            let isFourInARow = true;
+            for (let k = 0; k < 4; k++) {
+                const curR = sR + k * dir.dr;
+                const curC = sC + k * dir.dc;
+                if (!isInBounds(curC, curR) || board[curR][curC] !== player) {
+                    isFourInARow = false;
+                    break;
+                }
+            }
+
+            if (isFourInARow) {
+                fourCount++;
+                checkedLines.push(dirKey);
+                break;
+            }
+        }
+    }
+    board[r][c] = EMPTY; // Revert
+    return fourCount;
+}
+
+/**
+ * Checks for Three-Four: placing a stone creates an open three AND a four simultaneously.
+ */
+function checkThreeFour(board, r, c, player) {
+    // Place stone once for all checks for this spot
+    board[r][c] = player;
+    const openThrees = countOpenThreesFormed(board, r, c, player); // This function expects the stone to be NOT on board yet
+
+    // For counting fours, the stone should be on the board, so we already placed it.
+    // Re-implement a local four count that assumes stone is at (r,c)
+    let fourCount = 0;
+    const directions = [{ dr: 0, dc: 1 }, { dr: 1, dc: 0 }, { dr: 1, dc: 1 }, { dr: 1, dc: -1 }];
+    const checkedFourLines = [];
+    for (const dir of directions) {
+        const normDir = (dir.dc < 0 || (dir.dc === 0 && dir.dr < 0)) ? { dr: -dir.dr, dc: -dir.dc } : dir;
+        const dirKey = `${normDir.dr}_${normDir.dc}`;
+        if (checkedFourLines.includes(dirKey)) continue;
+
+        for (let i = 0; i < 4; i++) {
+            const sR = r - i * dir.dr;
+            const sC = c - i * dir.dc;
+            let isFourInARow = true;
+            for (let k = 0; k < 4; k++) {
+                const curR = sR + k * dir.dr;
+                const curC = sC + k * dir.dc;
+                if (!isInBounds(curC, curR) || board[curR][curC] !== player) {
+                    isFourInARow = false;
+                    break;
+                }
+            }
+            if (isFourInARow) {
+                fourCount++;
+                checkedFourLines.push(dirKey);
+                break;
+            }
+        }
+    }
+    board[r][c] = EMPTY; // Revert stone
+
+    // To be a 3-4, the specific stone at (r,c) must contribute to *both* an open three and a four.
+    // The countOpenThreesFormed and countFoursFormed are general.
+    // A more precise check might be needed if a single stone completes one pattern, and another existing stone completes the other.
+    // However, for highlighting (r,c), if placing stone there makes any open-three and any four, it's a 3-4 threat/opportunity.
+    // The logic in countOpenThreesFormed and the local fourCount already correctly attribute the formation to the stone at (r,c)
+    // because they check patterns *including* (r,c).
+
+    // Re-evaluate with the stone placed for the counts
+    // This is tricky: does (r,c) complete an open three AND a four that are distinct lines?
+    // Or does it extend one line to be an open three and another line to be a four?
+    // The current check is: placing (r,c) results in >=1 open three and >=1 four existing on the board that include (r,c).
+    if (openThrees > 0 && fourCount > 0) {
+         // More refined check: ensure (r,c) is part of different lines for 3 and 4
+        board[r][c] = player;
+        let isGenuineThreeFour = false;
+
+        const threeDirections = []; // Directions of open threes formed through (r,c)
+        const fourDirections = [];  // Directions of fours formed through (r,c)
+
+        // Find directions for open threes
+        const d3 = [{ dr: 0, dc: 1 }, { dr: 1, dc: 0 }, { dr: 1, dc: 1 }, { dr: 1, dc: -1 }];
+        const chk3L = [];
+        for (const dir of d3) {
+            const nDir = (dir.dc < 0 || (dir.dc === 0 && dir.dr < 0)) ? { dr: -dir.dr, dc: -dir.dc } : dir;
+            const dKey = `${nDir.dr}_${nDir.dc}`;
+            if (chk3L.includes(dKey)) continue;
+            for (let i = 0; i < 3; i++) {
+                const sR = r - i * dir.dr; const sC = c - i * dir.dc;
+                let is3 = true;
+                for (let k = 0; k < 3; k++) {
+                    const cR = sR + k * dir.dr; const cC = sC + k * dir.dc;
+                    if (!isInBounds(cC, cR) || board[cR][cC] !== player) { is3 = false; break; }
+                }
+                if (is3) {
+                    const bR = sR - dir.dr; const bC = sC - dir.dc;
+                    const aR = sR + 3 * dir.dr; const aC = sC + 3 * dir.dc;
+                    if (isInBounds(bC, bR) && board[bR][bC] === EMPTY && isInBounds(aC, aR) && board[aR][aC] === EMPTY) {
+                        threeDirections.push(nDir);
+                        chk3L.push(dKey);
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Find directions for fours
+        const d4 = [{ dr: 0, dc: 1 }, { dr: 1, dc: 0 }, { dr: 1, dc: 1 }, { dr: 1, dc: -1 }];
+        const chk4L = [];
+        for (const dir of d4) {
+            const nDir = (dir.dc < 0 || (dir.dc === 0 && dir.dr < 0)) ? { dr: -dir.dr, dc: -dir.dc } : dir;
+            const dKey = `${nDir.dr}_${nDir.dc}`;
+            if (chk4L.includes(dKey)) continue;
+            for (let i = 0; i < 4; i++) {
+                const sR = r - i * dir.dr; const sC = c - i * dir.dc;
+                let is4 = true;
+                for (let k = 0; k < 4; k++) {
+                    const cR = sR + k * dir.dr; const cC = sC + k * dir.dc;
+                    if (!isInBounds(cC, cR) || board[cR][cC] !== player) { is4 = false; break; }
+                }
+                if (is4) {
+                    fourDirections.push(nDir);
+                    chk4L.push(dKey);
+                    break;
+                }
+            }
+        }
+        board[r][c] = EMPTY; // Revert
+
+        // Check if there's at least one three-direction and one four-direction that are different
+        for (const tDir of threeDirections) {
+            for (const fDir of fourDirections) {
+                if (tDir.dr !== fDir.dr || tDir.dc !== fDir.dc) { // If directions are different
+                    isGenuineThreeFour = true;
+                    break;
+                }
+            }
+            if (isGenuineThreeFour) break;
+        }
+        return isGenuineThreeFour;
+    }
+    return false;
+}
+
+
+/**
+ * Checks for Double Four: placing a stone creates two fours simultaneously.
+ */
+function checkDoubleFour(board, r, c, player) {
+    // This is simpler: if placing the stone results in 2 or more fours.
+    // The countFoursFormed function already correctly counts distinct lines of four formed by (r,c).
+    return countFoursFormed(board, r, c, player) >= 2;
+}
+
+
+/**
+ * Gets detailed pattern hints for a given player.
+ * Iterates over empty cells, simulates placing a stone, and checks for patterns.
+ */
+function getDetailedPatternHints(board, player) {
+    const hints = [];
+    const opponent = (player === PLAYER_BLACK) ? PLAYER_WHITE : PLAYER_BLACK;
+    const hintCategory = (player === self.playerForOmniInternal) ? HINT_TYPE_PLAYER_OPPORTUNITY : HINT_TYPE_OPPONENT_THREAT;
+
+    for (let r = 0; r < BOARD_SIZE; r++) {
+        for (let c = 0; c < BOARD_SIZE; c++) {
+            if (board[r][c] === EMPTY) {
+                // Highest priority: Winning move
+                if (checkFive(board, r, c, player)) {
+                    hints.push({ x: c, y: r, patternType: PATTERN_TYPE_FIVE_IN_A_ROW, hintCategory });
+                    continue; // If it's a win, no need to check other patterns for this spot for this player
+                }
+
+                // Check for opponent's immediate win if player *doesn't* move here.
+                // This is a defensive check. If opponent can win at (r,c), then (r,c) is critical for player.
+                // This is slightly different from standard "opponent threat" which is about opponent's *next* move.
+                // For this version, we focus on what the current player's move at (r,c) achieves or blocks.
+                // The "opponent_threat" category will be for opponent's potential moves.
+
+                // Check for Double Four
+                if (checkDoubleFour(board, r, c, player)) {
+                    hints.push({ x: c, y: r, patternType: PATTERN_TYPE_DOUBLE_FOUR, hintCategory });
+                }
+                // Check for Three-Four (ensure it's not also a double four already counted)
+                // A double four might also be a three-four, but double-four is stronger.
+                // To avoid redundant highlights, we can prioritize.
+                // For now, let them stack if logic permits, UI can decide or we refine here.
+                else if (checkThreeFour(board, r, c, player)) { // Use 'else if' to avoid double counting with DF
+                    hints.push({ x: c, y: r, patternType: PATTERN_TYPE_THREE_FOUR, hintCategory });
+                }
+
+                // Check for Line of Four (that isn't part of a DF or TF already pushed for this spot)
+                // A simple line of four is less than DF or TF.
+                // To avoid multiple markers on the same spot from the same player, we can use flags or check existing hints.
+                let alreadyProcessedForStrongerPattern = hints.some(h => h.x === c && h.y === r && h.hintCategory === hintCategory);
+                if (!alreadyProcessedForStrongerPattern && checkLineOfFour(board, r, c, player)) {
+                     hints.push({ x: c, y: r, patternType: PATTERN_TYPE_LINE_OF_FOUR, hintCategory });
+                }
+
+                // Check for Double Three
+                // Reset flag for this check
+                alreadyProcessedForStrongerPattern = hints.some(h => h.x === c && h.y === r && h.hintCategory === hintCategory);
+                if (!alreadyProcessedForStrongerPattern && checkDoubleThree(board, r, c, player)) {
+                    hints.push({ x: c, y: r, patternType: PATTERN_TYPE_DOUBLE_THREE, hintCategory });
+                }
+            }
+        }
+    }
+    return hints;
+}
+
+// Store playerForOmni when evaluateAllPoints is called
+// This is a bit of a hack due to the self.onmessage structure, ideally it's passed around.
+self.playerForOmniInternal = null;
+
+
 // Worker message handler
 self.onmessage = function(e) {
     console.log('ai.worker.js: Message received from main script:', e.data);
@@ -343,11 +775,71 @@ self.onmessage = function(e) {
                 }
             }
         }
-        // Sort hints by score in descending order to show best hints first
-        hints.sort((a, b) => b.score - a.score);
+        // Store the player for whom omniscience is being calculated.
+        self.playerForOmniInternal = playerForOmni;
+        const opponent = (playerForOmni === PLAYER_BLACK) ? PLAYER_WHITE : PLAYER_BLACK;
 
-        console.log(`ai.worker.js: Evaluated ${hints.length} points for omniscience (score > 0).`);
-        self.postMessage({ type: 'omniEvaluationComplete', hints: hints });
+        // Get hints for the player's opportunities
+        const playerOpportunities = getDetailedPatternHints(boardCopy, playerForOmni);
+
+        // Get hints for the opponent's threats
+        const opponentThreats = getDetailedPatternHints(boardCopy, opponent);
+
+        // Combine hints. Prioritize more severe threats/opportunities if spots overlap.
+        // For now, a simple concatenation. UI might need to handle overlaps if one spot is both.
+        // Or, we can refine here. For example, if (x,y) is a win for player AND a win for opponent (unlikely but possible if board is nearly full), what to show?
+        // Current getDetailedPatternHints prioritizes WIN for a player, so an opponent WIN threat might not be generated if player can WIN at the same spot.
+        // This implies the player's WIN takes precedence in consideration.
+
+        let combinedHints = [];
+
+        // Add player opportunities, ensuring no duplicate coordinates from this category
+        const playerOpportunityCoords = new Set();
+        playerOpportunities.forEach(hint => {
+            const coordKey = `${hint.x},${hint.y}`;
+            if (!playerOpportunityCoords.has(coordKey)) {
+                combinedHints.push(hint);
+                playerOpportunityCoords.add(coordKey);
+            }
+        });
+
+        // Add opponent threats, potentially filtering if a player opportunity is a win at the same spot.
+        // If player can win at (x,y), that's the most important hint for that spot.
+        opponentThreats.forEach(threat => {
+            const isPlayerWinAtSameSpot = playerOpportunities.find(
+                op => op.x === threat.x && op.y === threat.y && op.patternType === PATTERN_TYPE_FIVE_IN_A_ROW
+            );
+            if (!isPlayerWinAtSameSpot) {
+                 // Avoid adding if the same spot is already a player opportunity (unless threat is a win and player op is not)
+                const isPlayerOpportunityAtSameSpot = playerOpportunities.find(op => op.x === threat.x && op.y === threat.y);
+                if (threat.patternType === PATTERN_TYPE_FIVE_IN_A_ROW || !isPlayerOpportunityAtSameSpot) {
+                    // Add if threat is a win, or if no player opportunity exists there,
+                    // or if we decide to allow both if they are different types (e.g. player forms 3, opp forms 4)
+                    // For now, simple add if not a direct conflict with player win.
+                    // We might need more sophisticated merging if a spot is, e.g., a player L4 and an opponent L4.
+                    // The current getDetailedPatternHints structure should prevent multiple hints for the *same player* at one spot.
+                    // But it allows one hint for player, one for opponent at the same spot.
+
+                    // Check if this exact threat (coord + type) is already there (e.g. from player making a defensive five)
+                    // This check is mostly redundant if categories are distinct, but good for safety.
+                    const alreadyExists = combinedHints.some(h => h.x === threat.x && h.y === threat.y && h.hintCategory === threat.hintCategory && h.patternType === threat.patternType);
+                    if(!alreadyExists) {
+                        // If a player opportunity exists at the same spot, but it's NOT a win,
+                        // and the opponent threat IS a win, the opponent threat should take precedence or be shown.
+                        // For now, let's add opponent threats unless the player has a winning move there.
+                        // The UI will ultimately decide how to display overlapping hints if any.
+                         combinedHints.push(threat);
+                    }
+                }
+            }
+        });
+
+        // Remove score as it's not used by the new system; patternType is key.
+        const finalHints = combinedHints.map(({ x, y, patternType, hintCategory }) => ({ x, y, patternType, hintCategory }));
+
+        console.log(`ai.worker.js: Evaluated points for omniscience. Player OPs: ${playerOpportunities.length}, Opponent Threats: ${opponentThreats.length}. Total unique hints sent: ${finalHints.length}`);
+        self.postMessage({ type: 'omniEvaluationComplete', hints: finalHints });
+        self.playerForOmniInternal = null; // Reset after use
 
     } else {
         console.error('ai.worker.js: Unknown message type received:', type);

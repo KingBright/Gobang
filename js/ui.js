@@ -422,18 +422,14 @@ function calculateAndDrawOmniHintsInternal(board) {
             console.log("UI: Received omniscience hints:", evaluatedHints);
             if (!isOmniscienceModeActive) return; // Mode might have been turned off
 
-            // Process and store hints
-            omniHints = evaluatedHints.slice(0, 5).map(hint => { // Take top 5 hints
-                let type = 'suggestion';
-                if (hint.score >= localPatternScoreRefs.LIVE_FOUR) type = 'critical';
-                else if (hint.score >= localPatternScoreRefs.LIVE_THREE) type = 'strong_suggestion';
-
-                return { x: hint.x, y: hint.y, score: hint.score, type: type };
-            });
+            // Hints are now directly in the format {x, y, patternType, hintCategory}
+            // No need to process score or old types like 'critical' or 'strong_suggestion'.
+            // Also, no need to slice to top 5, we want all relevant markers.
+            omniHints = evaluatedHints;
 
             // Restore game message or indicate hints are ready
             // updateGameMessageInternal(window.gameApi.getCurrentPlayer(), window.gameApi.getGameState());
-            console.log(`UI: Processed ${omniHints.length} hints for drawing.`);
+            console.log(`UI: Received ${omniHints.length} hints for drawing from AI.`);
             drawGameInternal(); // Redraw with new hints
         })
         .catch(error => {
@@ -452,37 +448,47 @@ function drawOmniHintsInternal() {
     }
     console.log("UI: Drawing omniscience hints:", omniHints.length);
 
-    omniHints.forEach((hint, index) => {
+    omniHints.forEach(hint => {
         const canvasX = currentCellSize / 2 + hint.x * currentCellSize;
         const canvasY = currentCellSize / 2 + hint.y * currentCellSize;
+        const markerRadius = currentStoneRadius * 0.5; // Smaller than a stone
+        const lineWidth = Math.max(2, currentCellSize / 15);
 
         ctx.beginPath();
-        let hintColor = 'rgba(0, 150, 255, 0.7)';
-        let lineWidth = Math.max(1, currentCellSize / 18);
-        let radius = currentStoneRadius * 0.6;
+        ctx.lineWidth = lineWidth;
 
-        if (hint.type === 'critical') {
-            hintColor = 'rgba(255, 0, 0, 0.7)';
-            lineWidth = Math.max(2, currentCellSize / 12);
-            radius = currentStoneRadius * 0.7;
-        } else if (hint.type === 'strong_suggestion') {
-            hintColor = 'rgba(255, 165, 0, 0.7)';
-            lineWidth = Math.max(1, currentCellSize / 15);
-            radius = currentStoneRadius * 0.65;
+        if (hint.hintCategory === HINT_TYPE_PLAYER_OPPORTUNITY) {
+            ctx.strokeStyle = 'rgba(0, 255, 0, 0.7)'; // Green for player opportunities
+        } else if (hint.hintCategory === HINT_TYPE_OPPONENT_THREAT) {
+            ctx.strokeStyle = 'rgba(255, 0, 0, 0.7)'; // Red for opponent threats
+        } else {
+            ctx.strokeStyle = 'rgba(0, 0, 0, 0.3)'; // Default/fallback (should not happen)
         }
 
-        ctx.strokeStyle = hintColor;
-        ctx.lineWidth = lineWidth;
-        ctx.arc(canvasX, canvasY, radius, 0, 2 * Math.PI);
+        // Draw a simple circle marker. Can be changed to square or other shapes.
+        // Example: Small circle outline
+        ctx.arc(canvasX, canvasY, markerRadius, 0, 2 * Math.PI);
         ctx.stroke();
 
-        if (index < 3) {
-            ctx.fillStyle = hintColor;
-            ctx.font = `${Math.max(8, currentCellSize * 0.3)}px Arial`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText((index + 1).toString(), canvasX, canvasY);
-        }
+        // Example: Small square marker (alternative)
+        // const sideLength = markerRadius * 1.5;
+        // ctx.strokeRect(canvasX - sideLength / 2, canvasY - sideLength / 2, sideLength, sideLength);
+
+        // Optional: Add text for pattern type if needed for debugging or more detail, but problem asks to remove other hints
+        // if (DEBUG_MODE) { // Assuming a global DEBUG_MODE for this
+        //    ctx.fillStyle = ctx.strokeStyle; // use same color as stroke
+        //    ctx.font = `${Math.max(8, currentCellSize * 0.2)}px Arial`;
+        //    ctx.textAlign = 'center';
+        //    ctx.textBaseline = 'bottom';
+        //    let shortPattern = hint.patternType.replace('pattern_type_', '').substring(0,3).toUpperCase();
+        //    if (hint.patternType === PATTERN_TYPE_FIVE_IN_A_ROW) shortPattern = "WIN";
+        //    if (hint.patternType === PATTERN_TYPE_LINE_OF_FOUR) shortPattern = "L4";
+        //    if (hint.patternType === PATTERN_TYPE_DOUBLE_THREE) shortPattern = "D3";
+        //    if (hint.patternType === PATTERN_TYPE_THREE_FOUR) shortPattern = "34";
+        //    if (hint.patternType === PATTERN_TYPE_DOUBLE_FOUR) shortPattern = "D4";
+        //    ctx.fillText(shortPattern, canvasX, canvasY - markerRadius - 2);
+        // }
+
     });
 }
 

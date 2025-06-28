@@ -15,6 +15,19 @@ const GAME_STATE_PAUSED = 'paused';     // Game is paused (e.g., AI thinking, mo
 // --- Game Logic Constants ---
 const WINNING_LENGTH = 5; // Number of stones in a row to win
 
+// --- Omniscience Pattern Type Constants ---
+const PATTERN_TYPE_FIVE_IN_A_ROW = 'five_in_a_row';
+const PATTERN_TYPE_LINE_OF_FOUR = 'line_of_four';
+const PATTERN_TYPE_DOUBLE_THREE = 'double_three';
+const PATTERN_TYPE_THREE_FOUR = 'three_four';
+const PATTERN_TYPE_DOUBLE_FOUR = 'double_four';
+// Add more specific types if needed, e.g., live three, sleep three, etc.
+
+// --- Omniscience Hint Category Constants ---
+const HINT_TYPE_PLAYER_OPPORTUNITY = 'player_opportunity';
+const HINT_TYPE_OPPONENT_THREAT = 'opponent_threat';
+
+
 // --- AI Related Constants (can be expanded in ai.js) ---
 // Example: const MAX_SEARCH_DEPTH = 5;
 
