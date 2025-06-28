@@ -24,7 +24,7 @@ try {
 const PATTERN_SCORES = {
     FIVE_IN_A_ROW: 100000,
     LIVE_FOUR: 10000,
-    RUSH_FOUR: 1000,
+    RUSH_FOUR: 5000, // Increased from 1000
     LIVE_THREE: 1000,
     SLEEP_THREE: 100,
     LIVE_TWO: 100,
