@@ -1,19 +1,50 @@
 // Gomoku AI Logic - Main Thread Interface for Web Worker
 
-// AI difficulty levels (maps to search depth)
-const AI_DIFFICULTY_LEVELS = {
-    1: 1, // Novice (depth 1)
-    2: 2, // Beginner (depth 2)
-    3: 3, // Intermediate (depth 3)
-    4: 4, // Advanced (depth 4)
-    5: 5  // Expert (depth 5)
+const AI_DIFFICULTY_PROFILES = {
+    1: { // Novice
+        name: "Novice",
+        searchDepth: 2,
+        heuristicLevel: 'novice',
+        randomness: 0.6,
+        randomTopN: 5
+    },
+    2: { // Apprentice
+        name: "Apprentice",
+        searchDepth: 3,
+        heuristicLevel: 'apprentice',
+        randomness: 0.3,
+        randomTopN: 3
+    },
+    3: { // Adept
+        name: "Adept",
+        searchDepth: 4,
+        heuristicLevel: 'adept',
+        randomness: 0.1,
+        randomTopN: 2
+    },
+    4: { // Expert
+        name: "Expert",
+        searchDepth: 5,
+        heuristicLevel: 'expert',
+        randomness: 0,
+        randomTopN: 1
+    },
+    5: { // Master
+        name: "Master",
+        searchDepth: 6,
+        heuristicLevel: 'master',
+        randomness: 0,
+        randomTopN: 1,
+        useOpeningBook: true // Added for opening book
+    }
 };
-let currentAiDifficulty = 3; // Default to Intermediate
-let currentSearchDepth = AI_DIFFICULTY_LEVELS[currentAiDifficulty];
+let currentSelectedDifficultyLevel = 3; // Default to Adept (level 3)
+let currentAiProfile = AI_DIFFICULTY_PROFILES[currentSelectedDifficultyLevel];
 
-const PATTERN_SCORES = { // Still useful for reference or light main-thread logic if any
-    FIVE_IN_A_ROW: 100000,
-};
+
+// const PATTERN_SCORES = { // This was for main thread, not really used. Worker has its own.
+//     FIVE_IN_A_ROW: 100000,
+// };
 
 let aiWorker;
 
@@ -97,7 +128,7 @@ function aiMakeMove(currentBoard) {
             return;
         }
 
-        console.log(`AI (Player ${PLAYER_WHITE}) is thinking with depth ${currentSearchDepth} via Worker...`);
+        console.log(`AI (Player ${PLAYER_WHITE}) is thinking with profile: ${currentAiProfile.name} (Depth: ${currentAiProfile.searchDepth}) via Worker...`);
 
         const tempOnMessage = function(e) {
             aiWorker.onmessage = globalWorkerMessageHandler; // Restore global handler
@@ -129,7 +160,12 @@ function aiMakeMove(currentBoard) {
         aiWorker.postMessage({
             type: 'findBestMove',
             board: currentBoard, // Worker should handle copying if it modifies the board.
-            searchDepth: currentSearchDepth,
+            difficultyProfile: { // Send necessary parts of the profile
+                searchDepth: currentAiProfile.searchDepth,
+                heuristicLevel: currentAiProfile.heuristicLevel,
+                randomness: currentAiProfile.randomness,
+                randomTopN: currentAiProfile.randomTopN
+            },
             aiPlayer: PLAYER_WHITE // Assuming AI is always PLAYER_WHITE for now
         });
     });
@@ -167,10 +203,10 @@ function evaluateAllPointsForOmniscience(board, player) {
 
 
 function setAiDifficulty(level) {
-    if (AI_DIFFICULTY_LEVELS[level]) {
-        currentAiDifficulty = level;
-        currentSearchDepth = AI_DIFFICULTY_LEVELS[level];
-        console.log(`AI difficulty set to ${level}, search depth ${currentSearchDepth}.`);
+    if (AI_DIFFICULTY_PROFILES[level]) {
+        currentSelectedDifficultyLevel = level;
+        currentAiProfile = AI_DIFFICULTY_PROFILES[currentSelectedDifficultyLevel];
+        console.log(`AI difficulty set to ${level} (${currentAiProfile.name}). Search Depth: ${currentAiProfile.searchDepth}, Heuristic: ${currentAiProfile.heuristicLevel}, Randomness: ${currentAiProfile.randomness}, TopN for random: ${currentAiProfile.randomTopN}`);
     } else {
         console.error(`Invalid AI difficulty level: ${level}`);
     }
@@ -178,18 +214,17 @@ function setAiDifficulty(level) {
 
 // Stub for potential main-thread light checks, if ever needed.
 // Currently, major AI logic is in worker.
-function findBestMoveMainThreadLight(board, depth, aiPlayer = PLAYER_WHITE) {
-    console.warn("findBestMoveMainThreadLight is a simplified stub and not recommended for primary use.");
-    return { score: 0, move: null}; // Placeholder
-}
+// function findBestMoveMainThreadLight(board, depth, aiPlayer = PLAYER_WHITE) {
+//     console.warn("findBestMoveMainThreadLight is a simplified stub and not recommended for primary use.");
+//     return { score: 0, move: null}; // Placeholder
+// }
 
 console.log("ai.js (main thread) loaded. Initializing AI Worker...");
 
 window.aiApi = {
     aiMakeMove: aiMakeMove,
     setAiDifficulty: setAiDifficulty,
-    getPatternScores: () => { return {...PATTERN_SCORES}; }, // Might be useful for UI display of scores
+    // getPatternScores: () => { return {...PATTERN_SCORES}; }, // PATTERN_SCORES removed from ai.js
     evaluateAllPointsForOmniscience: evaluateAllPointsForOmniscience,
-    // findBestMove: findBestMoveMainThreadLight, // Exposing stub if needed, but worker is primary
 };
 

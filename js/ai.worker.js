@@ -2,276 +2,511 @@
 
 // Attempt to import utilities and constants
 try {
-    importScripts('utils.js'); // Assuming utils.js is in the same /js/ path relative to the worker
+    importScripts('utils.js');
     console.log("ai.worker.js: utils.js imported successfully.");
 } catch (e) {
     console.error("ai.worker.js: Failed to import utils.js. Essential constants/functions might be missing.", e);
-    // If importScripts fails, critical constants need to be defined manually or passed via message.
-    // For now, we'll assume critical ones like BOARD_SIZE might be passed or are known.
-    // This is a fallback and not ideal.
-    self.BOARD_SIZE = 15; // Fallback, should be passed or imported
+    self.BOARD_SIZE = 15;
     self.EMPTY = 0;
     self.PLAYER_BLACK = 1;
     self.PLAYER_WHITE = 2;
     self.WINNING_LENGTH = 5;
-    self.isInBounds = function(x, y) { // Fallback isInBounds
+    self.isInBounds = function(x, y) {
         return x >= 0 && x < self.BOARD_SIZE && y >= 0 && y < self.BOARD_SIZE;
     };
 }
 
+// --- AI Pattern Type Constants ---
+const PT_FIVE = 'FIVE';
+const PT_LIVE_FOUR = 'LIVE_FOUR';
+const PT_DOUBLE_THREE = 'DOUBLE_THREE';
+const PT_DEAD_FOUR = 'DEAD_FOUR';
+const PT_LIVE_THREE = 'LIVE_THREE';
+const PT_DEAD_THREE = 'DEAD_THREE';
+const PT_LIVE_TWO = 'LIVE_TWO';
+const PT_DEAD_TWO = 'DEAD_TWO';
+const PT_SINGLE = 'SINGLE';
 
-// --- Heuristic Evaluation ---
+// --- Heuristic Evaluation Scores ---
 const PATTERN_SCORES = {
-    FIVE_IN_A_ROW: 100000,
-    LIVE_FOUR: 10000,
-    RUSH_FOUR: 5000, // Increased from 1000
-    LIVE_THREE: 1000,
-    SLEEP_THREE: 100,
-    LIVE_TWO: 100,
-    SLEEP_TWO: 10,
+    [PT_FIVE]:         { offensive: 100000000, defensive: 100000000 },
+    [PT_LIVE_FOUR]:    { offensive: 10000000,  defensive: 10000000 },
+    [PT_DOUBLE_THREE]: { offensive: 5000000,   defensive: 5000000 },
+    [PT_DEAD_FOUR]:    { offensive: 50000,     defensive: 100000 },
+    [PT_LIVE_THREE]:   { offensive: 1000,      defensive: 5000 },
+    [PT_DEAD_THREE]:   { offensive: 100,       defensive: 200 },
+    [PT_LIVE_TWO]:     { offensive: 50,        defensive: 100 },
+    [PT_DEAD_TWO]:     { offensive: 10,        defensive: 20 },
+    [PT_SINGLE]:       { offensive: 1,         defensive: 2 }
 };
 
-function evaluateBoard(board, aiPlayer = PLAYER_WHITE) {
-    const humanPlayer = (aiPlayer === PLAYER_BLACK) ? PLAYER_WHITE : PLAYER_BLACK;
-    const aiScore = calculateScoreForPlayer(board, aiPlayer);
-    const playerScore = calculateScoreForPlayer(board, humanPlayer);
-    if (aiScore >= PATTERN_SCORES.FIVE_IN_A_ROW) return PATTERN_SCORES.FIVE_IN_A_ROW * 10;
-    if (playerScore >= PATTERN_SCORES.FIVE_IN_A_ROW) return -PATTERN_SCORES.FIVE_IN_A_ROW * 10;
-    return aiScore - playerScore;
+// --- Bitboard Representation ---
+const NUM_BITBOARDS_PER_PLAYER = 4;
+const BITS_PER_BIGINT = BigInt(64);
+let bitboards = {};
+
+function initializeGlobalBitboards() {
+    bitboards[PLAYER_BLACK] = Array(NUM_BITBOARDS_PER_PLAYER).fill(BigInt(0));
+    bitboards[PLAYER_WHITE] = Array(NUM_BITBOARDS_PER_PLAYER).fill(BigInt(0));
+}
+initializeGlobalBitboards();
+
+function getCellBitPosition(r, c) {
+    return r * BOARD_SIZE + c;
 }
 
-function calculateScoreForPlayer(board, player) {
-    let totalScore = 0;
-    const directions = [
-        { dr: 0, dc: 1 }, { dr: 1, dc: 0 },
-        { dr: 1, dc: 1 }, { dr: 1, dc: -1 }
-    ];
-    const opponent = (player === PLAYER_BLACK) ? PLAYER_WHITE : PLAYER_BLACK;
-    for (let r = 0; r < BOARD_SIZE; r++) {
-        for (let c = 0; c < BOARD_SIZE; c++) {
-            if (board[r][c] === player) {
-                directions.forEach(dir => {
-                    if (checkPattern(board, r, c, dir, player, 5)) {
-                        totalScore += PATTERN_SCORES.FIVE_IN_A_ROW;
-                    } else if (checkPattern(board, r, c, dir, player, 4, true, true)) {
-                        totalScore += PATTERN_SCORES.LIVE_FOUR;
-                    } else if (checkPattern(board, r, c, dir, player, 4, true, false, opponent) ||
-                               checkPattern(board, r, c, dir, player, 4, false, true, opponent)) {
-                        totalScore += PATTERN_SCORES.RUSH_FOUR;
-                    } else if (checkPattern(board, r, c, dir, player, 3, true, true)) {
-                        totalScore += PATTERN_SCORES.LIVE_THREE;
-                    } else if (checkPattern(board, r, c, dir, player, 3, true, false, opponent) ||
-                               checkPattern(board, r, c, dir, player, 3, false, true, opponent)) {
-                        totalScore += PATTERN_SCORES.SLEEP_THREE;
-                    } else if (checkPattern(board, r, c, dir, player, 2, true, true)) {
-                        totalScore += PATTERN_SCORES.LIVE_TWO;
-                    } else if (checkPattern(board, r, c, dir, player, 2, true, false, opponent) ||
-                               checkPattern(board, r, c, dir, player, 2, false, true, opponent)) {
-                        totalScore += PATTERN_SCORES.SLEEP_TWO;
-                    }
-                });
-            }
-        }
-    }
-    return totalScore;
+function setCellBit(playerBitboardArray, r, c) {
+    const bitPos = getCellBitPosition(r, c);
+    const boardIndex = Math.floor(bitPos / 64);
+    const bitInBoard = BigInt(bitPos % 64);
+    if (boardIndex < NUM_BITBOARDS_PER_PLAYER) playerBitboardArray[boardIndex] |= (BigInt(1) << bitInBoard);
+    else console.error(`setCellBit: boardIndex ${boardIndex} out of range for bitPos ${bitPos}`);
 }
 
-function checkPattern(board, r, c, dir, player, length, openStart = null, openEnd = null, opponent = null) {
-    for (let i = 0; i < length; i++) {
-        const curR = r + i * dir.dr;
-        const curC = c + i * dir.dc;
-        if (!isInBounds(curC, curR) || board[curR][curC] !== player) return false;
-    }
-    if (openStart !== null) {
-        const beforeR = r - dir.dr;
-        const beforeC = c - dir.dc;
-        if (openStart === true) {
-            if (!isInBounds(beforeC, beforeR) || board[beforeR][beforeC] !== EMPTY) return false;
-        } else {
-            if (opponent === null) { console.warn("checkPattern: opponent ID null for blocked start"); return false; }
-            if (isInBounds(beforeC, beforeR) && board[beforeR][beforeC] !== opponent) return false;
-        }
-    }
-    if (openEnd !== null) {
-        const afterR = r + length * dir.dr;
-        const afterC = c + length * dir.dc;
-        if (openEnd === true) {
-            if (!isInBounds(afterC, afterR) || board[afterR][afterC] !== EMPTY) return false;
-        } else {
-            if (opponent === null) { console.warn("checkPattern: opponent ID null for blocked end"); return false; }
-            if (isInBounds(afterC, afterR) && board[afterR][afterC] !== opponent) return false;
-        }
-    }
-    return true;
+function clearCellBit(playerBitboardArray, r, c) {
+    const bitPos = getCellBitPosition(r, c);
+    const boardIndex = Math.floor(bitPos / 64);
+    const bitInBoard = BigInt(bitPos % 64);
+    if (boardIndex < NUM_BITBOARDS_PER_PLAYER) playerBitboardArray[boardIndex] &= ~(BigInt(1) << bitInBoard);
+    else console.error(`clearCellBit: boardIndex ${boardIndex} out of range for bitPos ${bitPos}`);
 }
 
-// New helper function to score a single potential move heuristically
-function scoreMoveHeuristically(board, x, y, player) {
-    let score = 0;
-    const opponent = (player === PLAYER_BLACK) ? PLAYER_WHITE : PLAYER_BLACK;
-
-    // Temporarily place the stone to check patterns formed
-    board[y][x] = player; // Make the move
-
-    // 1. Check for immediate win for 'player'
-    if (checkWinForPlayer(board, player)) {
-        board[y][x] = EMPTY; // Revert
-        return PATTERN_SCORES.FIVE_IN_A_ROW * 10; // Very high score for immediate win
-    }
-
-    // 2. Check if this move blocks an immediate win for the opponent
-    // To do this, see if opponent *would have won* if they played at x,y
-    board[y][x] = opponent; // Simulate opponent playing here instead
-    if (checkWinForPlayer(board, opponent)) {
-        // If opponent would have won here, then 'player' playing here is a critical block.
-        score += PATTERN_SCORES.LIVE_FOUR * 2; // High score for blocking opponent's win
-    }
-
-    // Revert to player's stone for further offensive checks (if any)
-    board[y][x] = player;
-
-    // 3. Basic offensive heuristic: count adjacent same-color stones (simplified)
-    // This encourages clustering but is not a full pattern analysis.
-    const directions = [{dr:0,dc:1},{dr:1,dc:0},{dr:1,dc:1},{dr:1,dc:-1}];
-    for(const dir of directions) {
-        for(let i = 1; i < 3; i++) { // Check 1-2 steps in each of 8 directions
-            if (isInBounds(x + i * dir.dc, y + i * dir.dr) && board[y + i * dir.dr][x + i * dir.dc] === player) score += 30; else break;
-        }
-         for(let i = 1; i < 3; i++) {
-            if (isInBounds(x - i * dir.dc, y - i * dir.dr) && board[y - i * dir.dr][x - i * dir.dc] === player) score += 30; else break;
-        }
-    }
-    // (Could add more sophisticated local pattern checks here if needed, e.g., forming live threes)
-
-    board[y][x] = EMPTY; // IMPORTANT: Always revert the board to original state before returning
-    return score;
-}
-
-
-function findBestMove(board, depth, alpha, beta, maximizingPlayer, aiPlayer = PLAYER_WHITE) {
-    if (depth === 0 || isGameOver(board, aiPlayer)) {
-        return { score: evaluateBoard(board, aiPlayer), move: null };
-    }
-
-    let possibleMoves = getPossibleMoves(board);
-    if (possibleMoves.length === 0) {
-        return { score: evaluateBoard(board, aiPlayer), move: null };
-    }
-
-    // Sort possible moves to improve alpha-beta pruning efficiency
-    if (depth >= 1 && possibleMoves.length > 1) { // Sort if there's depth and choice
-        const currentPlayerForSort = maximizingPlayer ? aiPlayer : ((aiPlayer === PLAYER_BLACK) ? PLAYER_WHITE : PLAYER_BLACK);
-        const scoredMoves = possibleMoves.map(move => {
-            // Score is based on the immediate impact of the move by currentPlayerForSort
-            const score = scoreMoveHeuristically(board, move.x, move.y, currentPlayerForSort);
-            return { move, score };
-        });
-        scoredMoves.sort((a, b) => b.score - a.score); // Higher scores first
-        possibleMoves = scoredMoves.map(sm => sm.move);
-    }
-
-    let bestMoveForThisNode = null; // Tracks the best move found at this particular node/depth
-
-    if (maximizingPlayer) {
-        let maxEval = -Infinity;
-        for (const move of possibleMoves) {
-            board[move.y][move.x] = aiPlayer; // Make move on the shared board
-            const currentEval = findBestMove(board, depth - 1, alpha, beta, false, aiPlayer).score;
-            board[move.y][move.x] = EMPTY; // Undo move
-
-            if (currentEval > maxEval) {
-                maxEval = currentEval;
-                bestMoveForThisNode = move;
-            }
-            alpha = Math.max(alpha, currentEval);
-            if (beta <= alpha) break;
-        }
-        return { score: maxEval, move: bestMoveForThisNode };
-    } else { // Minimizing player
-        let minEval = Infinity;
-        const opponentPlayer = (aiPlayer === PLAYER_BLACK) ? PLAYER_WHITE : PLAYER_BLACK;
-        for (const move of possibleMoves) {
-            board[move.y][move.x] = opponentPlayer; // Make move on the shared board
-            const currentEval = findBestMove(board, depth - 1, alpha, beta, true, aiPlayer).score;
-            board[move.y][move.x] = EMPTY; // Undo move
-
-            if (currentEval < minEval) {
-                minEval = currentEval;
-                bestMoveForThisNode = move; // Though for min player, this move is less critical to return up
-            }
-            beta = Math.min(beta, currentEval);
-            if (beta <= alpha) break;
-        }
-        return { score: minEval, move: bestMoveForThisNode };
-    }
-}
-
-function isGameOver(board, aiPlayer) {
-    if (checkWinForPlayer(board, aiPlayer)) return true;
-    const humanPlayer = (aiPlayer === PLAYER_BLACK) ? PLAYER_WHITE : PLAYER_BLACK;
-    if (checkWinForPlayer(board, humanPlayer)) return true;
-    for (let r = 0; r < BOARD_SIZE; r++) {
-        for (let c = 0; c < BOARD_SIZE; c++) {
-            if (board[r][c] === EMPTY) return false;
-        }
-    }
-    return true;
-}
-
-function checkWinForPlayer(currentBoard, player) {
-    const directions = [
-        { dx: 1, dy: 0 }, { dx: 0, dy: 1 }, { dx: 1, dy: 1 }, { dx: 1, dy: -1 }
-    ];
-    for (let r = 0; r < BOARD_SIZE; r++) {
-        for (let c = 0; c < BOARD_SIZE; c++) {
-            if (currentBoard[r][c] === player) {
-                for (const dir of directions) {
-                    let count = 0;
-                    for (let i = 0; i < WINNING_LENGTH; i++) {
-                        const x = c + i * dir.dx;
-                        const y = r + i * dir.dy;
-                        if (isInBounds(x, y) && currentBoard[y][x] === player) count++;
-                        else break;
-                    }
-                    if (count === WINNING_LENGTH) return true;
-                }
-            }
-        }
+function getCellBit(playerBitboardArray, r, c) {
+    const bitPos = getCellBitPosition(r, c);
+    const boardIndex = Math.floor(bitPos / 64);
+    const bitInBoard = BigInt(bitPos % 64);
+    if (boardIndex < NUM_BITBOARDS_PER_PLAYER && r >=0 && r < BOARD_SIZE && c >=0 && c < BOARD_SIZE) {
+        return (playerBitboardArray[boardIndex] & (BigInt(1) << bitInBoard)) !== BigInt(0);
     }
     return false;
 }
 
-function getPossibleMoves(board) {
-    const moves = [];
-    let occupiedCount = 0;
-    const candidateMap = Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill(false));
-
+function initGlobalBitboardsFrom2DArray(board2D) {
+    initializeGlobalBitboards();
     for (let r = 0; r < BOARD_SIZE; r++) {
         for (let c = 0; c < BOARD_SIZE; c++) {
-            if (board[r][c] !== EMPTY) {
-                occupiedCount++;
-            }
+            if (board2D[r][c] === PLAYER_BLACK) setCellBit(bitboards[PLAYER_BLACK], r, c);
+            else if (board2D[r][c] === PLAYER_WHITE) setCellBit(bitboards[PLAYER_WHITE], r, c);
+        }
+    }
+}
+
+function getCellStatus(r, c) {
+    if (!isInBounds(c, r)) return 'EDGE';
+    if (getCellBit(bitboards[PLAYER_BLACK], r, c)) return PLAYER_BLACK;
+    if (getCellBit(bitboards[PLAYER_WHITE], r, c)) return PLAYER_WHITE;
+    return EMPTY;
+}
+
+// --- Zobrist Hashing ---
+let zobristTable = [];
+function generateRandomBigInt() {
+    if (self.crypto && self.crypto.getRandomValues) {
+        const buffer = new BigUint64Array(1); self.crypto.getRandomValues(buffer); return buffer[0];
+    } else {
+        console.warn("Crypto API not available for Zobrist key generation, using Math.random().");
+        const p1 = BigInt(Math.floor(Math.random()*(2**32))); const p2 = BigInt(Math.floor(Math.random()*(2**32))); return (p1<<BigInt(32))|p2;
+    }
+}
+function initZobrist() {
+    zobristTable = Array(BOARD_SIZE);
+    for (let r = 0; r < BOARD_SIZE; r++) {
+        zobristTable[r] = Array(BOARD_SIZE);
+        for (let c = 0; c < BOARD_SIZE; c++) {
+            zobristTable[r][c] = {};
+            zobristTable[r][c][PLAYER_BLACK] = generateRandomBigInt();
+            zobristTable[r][c][PLAYER_WHITE] = generateRandomBigInt();
+        }
+    }
+    console.log("Zobrist table initialized.");
+}
+initZobrist();
+
+function computeZobristHashFromArray(boardArray) {
+    let hash = BigInt(0);
+    for (let r = 0; r < BOARD_SIZE; r++) for (let c = 0; c < BOARD_SIZE; c++) {
+        if (boardArray[r][c] !== EMPTY) hash ^= zobristTable[r][c][boardArray[r][c]];
+    }
+    return hash;
+}
+function computeZobristHashFromBitboards() {
+    let hash = BigInt(0);
+    for (let r = 0; r < BOARD_SIZE; r++) for (let c = 0; c < BOARD_SIZE; c++) {
+        if (getCellBit(bitboards[PLAYER_BLACK], r, c)) hash ^= zobristTable[r][c][PLAYER_BLACK];
+        else if (getCellBit(bitboards[PLAYER_WHITE], r, c)) hash ^= zobristTable[r][c][PLAYER_WHITE];
+    }
+    return hash;
+}
+function updateZobristHash(currentHash, r, c, player) {
+    return currentHash ^ zobristTable[r][c][player];
+}
+
+// --- Opening Book ---
+const openingBook = new Map();
+function initOpeningBook() {
+    let emptyBoardArray = Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill(EMPTY));
+    let hashStateStr;
+    hashStateStr = computeZobristHashFromArray(emptyBoardArray).toString();
+    openingBook.set(hashStateStr, [{ x: 7, y: 7 }]);
+    emptyBoardArray[7][7] = PLAYER_BLACK;
+    hashStateStr = computeZobristHashFromArray(emptyBoardArray).toString();
+    openingBook.set(hashStateStr, [ { x: 7, y: 6 }, { x: 6, y: 7 }, { x: 8, y: 7 }, { x: 7, y: 8 }, { x: 6, y: 6 }, { x: 8, y: 8 }, { x: 6, y: 8 }, { x: 8, y: 6 } ]);
+    emptyBoardArray[7][7] = EMPTY;
+    console.log(`Opening book initialized with ${openingBook.size} states.`);
+}
+initOpeningBook();
+
+// --- Transposition Table ---
+const transpositionTable = new Map();
+const TT_FLAG_EXACT = 0; const TT_FLAG_LOWERBOUND = 1; const TT_FLAG_UPPERBOUND = 2;
+
+// --- Bitboard Pattern Detection & Helpers ---
+function PopCount(bigIntValue) {
+    let count = 0; let n = bigIntValue;
+    while (n > BigInt(0)) { n &= (n - BigInt(1)); count++; }
+    return count;
+}
+function PopCountBoardArray(bbArray) {
+    let totalCount = 0;
+    for (const bb of bbArray) totalCount += PopCount(bb);
+    return totalCount;
+}
+function BitwiseANDBoardArrays(bbA, bbB) {
+    const result = Array(NUM_BITBOARDS_PER_PLAYER).fill(BigInt(0));
+    for (let i = 0; i < NUM_BITBOARDS_PER_PLAYER; i++) result[i] = bbA[i] & bbB[i];
+    return result;
+}
+function BitwiseORBoardArrays(bbA, bbB) {
+    const result = Array(NUM_BITBOARDS_PER_PLAYER).fill(BigInt(0));
+    for (let i = 0; i < NUM_BITBOARDS_PER_PLAYER; i++) result[i] = bbA[i] | bbB[i];
+    return result;
+}
+
+function shiftBoardHorizontalRight(inputBoardArray, count) {
+    if (count === 0) return inputBoardArray.map(b => b);
+    if (count < 0) { return shiftBoardHorizontalLeft(inputBoardArray, -count); }
+    const resultBoardArray = Array(NUM_BITBOARDS_PER_PLAYER).fill(BigInt(0));
+    for (let r = 0; r < BOARD_SIZE; r++) for (let c = 0; c < BOARD_SIZE; c++) {
+        const src_c = c + count;
+        if (src_c < BOARD_SIZE && getCellBit(inputBoardArray, r, src_c)) setCellBit(resultBoardArray, r, c);
+    }
+    return resultBoardArray;
+}
+function shiftBoardHorizontalLeft(inputBoardArray, count) {
+    if (count === 0) return inputBoardArray.map(b => b);
+    if (count < 0) { return shiftBoardHorizontalRight(inputBoardArray, -count); }
+    const resultBoardArray = Array(NUM_BITBOARDS_PER_PLAYER).fill(BigInt(0));
+    for (let r = 0; r < BOARD_SIZE; r++) for (let c = 0; c < BOARD_SIZE; c++) {
+        const src_c = c - count;
+        if (src_c >= 0 && getCellBit(inputBoardArray, r, src_c)) setCellBit(resultBoardArray, r, c);
+    }
+    return resultBoardArray;
+}
+function shiftBoardVertical(inputBoardArray, count) { // +ve down, -ve up
+    if (count === 0) return inputBoardArray.map(b => b);
+    const resultBoardArray = Array(NUM_BITBOARDS_PER_PLAYER).fill(BigInt(0));
+    if (count > 0) {
+        for (let r = 0; r < BOARD_SIZE; r++) for (let c = 0; c < BOARD_SIZE; c++) {
+            const src_r = r - count;
+            if (src_r >= 0 && getCellBit(inputBoardArray, src_r, c)) setCellBit(resultBoardArray, r, c);
+        }
+    } else {
+        const absCount = -count;
+        for (let r = 0; r < BOARD_SIZE; r++) for (let c = 0; c < BOARD_SIZE; c++) {
+            const src_r = r + absCount;
+            if (src_r < BOARD_SIZE && getCellBit(inputBoardArray, src_r, c)) setCellBit(resultBoardArray, r, c);
+        }
+    }
+    return resultBoardArray;
+}
+function shiftBoardDiagonalDownRight(inputBoardArray, count) {
+    if (count === 0) return inputBoardArray.map(b => b);
+    const resultBoardArray = Array(NUM_BITBOARDS_PER_PLAYER).fill(BigInt(0));
+    for (let r = 0; r < BOARD_SIZE; r++) for (let c = 0; c < BOARD_SIZE; c++) {
+        const src_r = r - count; const src_c = c - count;
+        if (src_r >= 0 && src_c >= 0 && getCellBit(inputBoardArray, src_r, src_c)) setCellBit(resultBoardArray, r, c);
+    }
+    return resultBoardArray;
+}
+function shiftBoardDiagonalDownLeft(inputBoardArray, count) {
+    if (count === 0) return inputBoardArray.map(b => b);
+    const resultBoardArray = Array(NUM_BITBOARDS_PER_PLAYER).fill(BigInt(0));
+    for (let r = 0; r < BOARD_SIZE; r++) for (let c = 0; c < BOARD_SIZE; c++) {
+        const src_r = r - count; const src_c = c + count;
+        if (src_r >= 0 && src_c < BOARD_SIZE && getCellBit(inputBoardArray, src_r, src_c)) setCellBit(resultBoardArray, r, c);
+    }
+    return resultBoardArray;
+}
+
+function detectHorizontalFiveBitwise(playerBB) {
+    let t = playerBB.map(b=>b); let s;
+    s = shiftBoardHorizontalRight(playerBB, 1); t = BitwiseANDBoardArrays(t, s);
+    s = shiftBoardHorizontalRight(playerBB, 2); t = BitwiseANDBoardArrays(t, s);
+    s = shiftBoardHorizontalRight(playerBB, 3); t = BitwiseANDBoardArrays(t, s);
+    s = shiftBoardHorizontalRight(playerBB, 4); t = BitwiseANDBoardArrays(t, s);
+    return t;
+}
+function detectVerticalFiveBitwise(playerBB) {
+    let t = playerBB.map(b=>b); let s;
+    s = shiftBoardVertical(playerBB, -1); t = BitwiseANDBoardArrays(t, s);
+    s = shiftBoardVertical(playerBB, -2); t = BitwiseANDBoardArrays(t, s);
+    s = shiftBoardVertical(playerBB, -3); t = BitwiseANDBoardArrays(t, s);
+    s = shiftBoardVertical(playerBB, -4); t = BitwiseANDBoardArrays(t, s);
+    return t;
+}
+function detectDiagonalDownRightFiveBitwise(playerBB) {
+    let t = playerBB.map(b=>b); let s;
+    s = shiftBoardDiagonalDownRight(playerBB, 1); t = BitwiseANDBoardArrays(t, s);
+    s = shiftBoardDiagonalDownRight(playerBB, 2); t = BitwiseANDBoardArrays(t, s);
+    s = shiftBoardDiagonalDownRight(playerBB, 3); t = BitwiseANDBoardArrays(t, s);
+    s = shiftBoardDiagonalDownRight(playerBB, 4); t = BitwiseANDBoardArrays(t, s);
+    return t;
+}
+function detectDiagonalDownLeftFiveBitwise(playerBB) {
+    let t = playerBB.map(b=>b); let s;
+    s = shiftBoardDiagonalDownLeft(playerBB, 1); t = BitwiseANDBoardArrays(t, s);
+    s = shiftBoardDiagonalDownLeft(playerBB, 2); t = BitwiseANDBoardArrays(t, s);
+    s = shiftBoardDiagonalDownLeft(playerBB, 3); t = BitwiseANDBoardArrays(t, s);
+    s = shiftBoardDiagonalDownLeft(playerBB, 4); t = BitwiseANDBoardArrays(t, s);
+    return t;
+}
+
+function detectHorizontalFourBitwise(playerBB) {
+    let t = playerBB.map(b=>b); let s;
+    s = shiftBoardHorizontalRight(playerBB, 1); t = BitwiseANDBoardArrays(t, s);
+    s = shiftBoardHorizontalRight(playerBB, 2); t = BitwiseANDBoardArrays(t, s);
+    s = shiftBoardHorizontalRight(playerBB, 3); t = BitwiseANDBoardArrays(t, s);
+    return t;
+}
+function computeEmptyCellsBitboard() {
+    const emptyBB = Array(NUM_BITBOARDS_PER_PLAYER).fill(BigInt(0));
+    const occupiedBB = Array(NUM_BITBOARDS_PER_PLAYER).fill(BigInt(0));
+
+    // Combine player bitboards to get all occupied cells
+    for (let i = 0; i < NUM_BITBOARDS_PER_PLAYER; i++) {
+        occupiedBB[i] = bitboards[PLAYER_BLACK][i] | bitboards[PLAYER_WHITE][i];
+    }
+
+    // Create a mask for all valid board positions
+    const fullBoardMask = Array(NUM_BITBOARDS_PER_PLAYER).fill(BigInt(0));
+    for (let r = 0; r < BOARD_SIZE; r++) {
+        for (let c = 0; c < BOARD_SIZE; c++) {
+            // Use the existing setCellBit which correctly targets playerBitboardArray
+            // To use it for fullBoardMask, we pass fullBoardMask as the first argument.
+            // This implies setCellBit should be generic, or we need a variant.
+            // Let's assume setCellBit(maskArray, r, c) works by modifying maskArray.
+            // The current setCellBit is: setCellBit(playerBitboardArray, r, c)
+            // So this is fine if fullBoardMask is structured like a playerBitboardArray.
+            setCellBit(fullBoardMask, r, c);
         }
     }
 
-    if (occupiedCount === 0) {
-        moves.push({ x: Math.floor(BOARD_SIZE / 2), y: Math.floor(BOARD_SIZE / 2) });
-        return moves;
+    for (let i = 0; i < NUM_BITBOARDS_PER_PLAYER; i++) {
+        emptyBB[i] = (~occupiedBB[i]) & fullBoardMask[i];
+    }
+    return emptyBB;
+}
+function detectHorizontalLiveFourBitwise(playerBB, emptyBB) {
+    const p_bb = playerBB; const e_bb = emptyBB;
+    let P0 = p_bb;
+    let P1 = shiftBoardHorizontalLeft(p_bb, 1);
+    let P2 = shiftBoardHorizontalLeft(p_bb, 2);
+    let P3 = shiftBoardHorizontalLeft(p_bb, 3);
+    let E_neg1 = shiftBoardHorizontalRight(e_bb, 1);
+    let E_pos4 = shiftBoardHorizontalLeft(e_bb, 4);
+
+    let liveFours = BitwiseANDBoardArrays(E_neg1, P0);
+    liveFours = BitwiseANDBoardArrays(liveFours, P1);
+    liveFours = BitwiseANDBoardArrays(liveFours, P2);
+    liveFours = BitwiseANDBoardArrays(liveFours, P3);
+    liveFours = BitwiseANDBoardArrays(liveFours, E_pos4);
+    return liveFours;
+}
+function detectHorizontalDeadFourBitwise(playerBB, opponentBB, emptyBB) {
+    const p_bb = playerBB; const o_bb = opponentBB; const e_bb = emptyBB;
+    let P0=p_bb, P1=shiftBoardHorizontalLeft(p_bb,1), P2=shiftBoardHorizontalLeft(p_bb,2), P3=shiftBoardHorizontalLeft(p_bb,3);
+
+    let O_neg1 = shiftBoardHorizontalRight(o_bb, 1);
+    let E_pos4 = shiftBoardHorizontalLeft(e_bb, 4);
+    let df1 = BitwiseANDBoardArrays(O_neg1, P0); df1 = BitwiseANDBoardArrays(df1, P1); df1 = BitwiseANDBoardArrays(df1, P2); df1 = BitwiseANDBoardArrays(df1, P3); df1 = BitwiseANDBoardArrays(df1, E_pos4);
+
+    let E_neg1 = shiftBoardHorizontalRight(e_bb, 1);
+    let O_pos4 = shiftBoardHorizontalLeft(o_bb, 4);
+    let df2 = BitwiseANDBoardArrays(E_neg1, P0); df2 = BitwiseANDBoardArrays(df2, P1); df2 = BitwiseANDBoardArrays(df2, P2); df2 = BitwiseANDBoardArrays(df2, P3); df2 = BitwiseANDBoardArrays(df2, O_pos4);
+
+    return BitwiseORBoardArrays(df1, df2);
+}
+
+function detectVerticalFourBitwise(playerBB) {
+    let t = playerBB.map(b=>b); let s;
+    s = shiftBoardVertical(playerBB, -1); t = BitwiseANDBoardArrays(t, s);
+    s = shiftBoardVertical(playerBB, -2); t = BitwiseANDBoardArrays(t, s);
+    s = shiftBoardVertical(playerBB, -3); t = BitwiseANDBoardArrays(t, s);
+    return t;
+}
+function detectVerticalLiveFourBitwise(playerBB, emptyBB) {
+    const p_bb = playerBB; const e_bb = emptyBB;
+    let E_neg1 = shiftBoardVertical(e_bb, 1);
+    let P0 = p_bb;
+    let P1 = shiftBoardVertical(p_bb, -1);
+    let P2 = shiftBoardVertical(p_bb, -2);
+    let P3 = shiftBoardVertical(p_bb, -3);
+    let E_pos4 = shiftBoardVertical(e_bb, -4);
+    let lf = BitwiseANDBoardArrays(E_neg1, P0); lf = BitwiseANDBoardArrays(lf, P1); lf = BitwiseANDBoardArrays(lf, P2); lf = BitwiseANDBoardArrays(lf, P3); lf = BitwiseANDBoardArrays(lf, E_pos4);
+    return lf;
+}
+function detectVerticalDeadFourBitwise(playerBB, opponentBB, emptyBB) {
+    const p_bb=playerBB, o_bb=opponentBB, e_bb=emptyBB;
+    let P0=p_bb, P1=shiftBoardVertical(p_bb,-1), P2=shiftBoardVertical(p_bb,-2), P3=shiftBoardVertical(p_bb,-3);
+    let O_neg1=shiftBoardVertical(o_bb,1), E_pos4=shiftBoardVertical(e_bb,-4);
+    let df1 = BitwiseANDBoardArrays(O_neg1,P0); df1=BitwiseANDBoardArrays(df1,P1); df1=BitwiseANDBoardArrays(df1,P2); df1=BitwiseANDBoardArrays(df1,P3); df1=BitwiseANDBoardArrays(df1,E_pos4);
+    let E_neg1=shiftBoardVertical(e_bb,1), O_pos4=shiftBoardVertical(o_bb,-4);
+    let df2 = BitwiseANDBoardArrays(E_neg1,P0); df2=BitwiseANDBoardArrays(df2,P1); df2=BitwiseANDBoardArrays(df2,P2); df2=BitwiseANDBoardArrays(df2,P3); df2=BitwiseANDBoardArrays(df2,O_pos4);
+    return BitwiseORBoardArrays(df1,df2);
+}
+
+function detectDiagonalDownRightFourBitwise(playerBB) {
+    let t = playerBB.map(b=>b); let s;
+    s = shiftBoardDiagonalDownRight(playerBB, 1); t = BitwiseANDBoardArrays(t, s);
+    s = shiftBoardDiagonalDownRight(playerBB, 2); t = BitwiseANDBoardArrays(t, s);
+    s = shiftBoardDiagonalDownRight(playerBB, 3); t = BitwiseANDBoardArrays(t, s);
+    return t;
+}
+function detectDiagonalDownRightLiveFourBitwise(playerBB, emptyBB) {
+    const p_bb=playerBB, e_bb=emptyBB;
+    let E_n1 = shiftBoardDiagonalDownRight(e_bb,1), P0=p_bb, P1=shiftBoardDiagonalDownRight(p_bb,-1), P2=shiftBoardDiagonalDownRight(p_bb,-2), P3=shiftBoardDiagonalDownRight(p_bb,-3), E_p4=shiftBoardDiagonalDownRight(e_bb,-4);
+    let lf=BitwiseANDBoardArrays(E_n1,P0); lf=BitwiseANDBoardArrays(lf,P1); lf=BitwiseANDBoardArrays(lf,P2); lf=BitwiseANDBoardArrays(lf,P3); lf=BitwiseANDBoardArrays(lf,E_p4);
+    return lf;
+}
+function detectDiagonalDownRightDeadFourBitwise(playerBB, opponentBB, emptyBB) {
+    const p_bb=playerBB, o_bb=opponentBB, e_bb=emptyBB;
+    let P0=p_bb, P1=shiftBoardDiagonalDownRight(p_bb,-1), P2=shiftBoardDiagonalDownRight(p_bb,-2), P3=shiftBoardDiagonalDownRight(p_bb,-3);
+    let O_n1=shiftBoardDiagonalDownRight(o_bb,1), E_p4=shiftBoardDiagonalDownRight(e_bb,-4);
+    let df1=BitwiseANDBoardArrays(O_n1,P0); df1=BitwiseANDBoardArrays(df1,P1); df1=BitwiseANDBoardArrays(df1,P2); df1=BitwiseANDBoardArrays(df1,P3); df1=BitwiseANDBoardArrays(df1,E_p4);
+    let E_n1=shiftBoardDiagonalDownRight(e_bb,1), O_p4=shiftBoardDiagonalDownRight(o_bb,-4);
+    let df2=BitwiseANDBoardArrays(E_n1,P0); df2=BitwiseANDBoardArrays(df2,P1); df2=BitwiseANDBoardArrays(df2,P2); df2=BitwiseANDBoardArrays(df2,P3); df2=BitwiseANDBoardArrays(df2,O_p4);
+    return BitwiseORBoardArrays(df1,df2);
+}
+
+function detectDiagonalDownLeftFourBitwise(playerBB) {
+    let t = playerBB.map(b=>b); let s;
+    s = shiftBoardDiagonalDownLeft(playerBB, 1); t = BitwiseANDBoardArrays(t, s);
+    s = shiftBoardDiagonalDownLeft(playerBB, 2); t = BitwiseANDBoardArrays(t, s);
+    s = shiftBoardDiagonalDownLeft(playerBB, 3); t = BitwiseANDBoardArrays(t, s);
+    return t;
+}
+function detectDiagonalDownLeftLiveFourBitwise(playerBB, emptyBB) {
+    const p_bb=playerBB, e_bb=emptyBB;
+    let E_n1=shiftBoardDiagonalDownLeft(e_bb,1), P0=p_bb, P1=shiftBoardDiagonalDownLeft(p_bb,-1), P2=shiftBoardDiagonalDownLeft(p_bb,-2), P3=shiftBoardDiagonalDownLeft(p_bb,-3), E_p4=shiftBoardDiagonalDownLeft(e_bb,-4);
+    let lf=BitwiseANDBoardArrays(E_n1,P0); lf=BitwiseANDBoardArrays(lf,P1); lf=BitwiseANDBoardArrays(lf,P2); lf=BitwiseANDBoardArrays(lf,P3); lf=BitwiseANDBoardArrays(lf,E_p4);
+    return lf;
+}
+function detectDiagonalDownLeftDeadFourBitwise(playerBB, opponentBB, emptyBB) {
+    const p_bb=playerBB, o_bb=opponentBB, e_bb=emptyBB;
+    let P0=p_bb, P1=shiftBoardDiagonalDownLeft(p_bb,-1), P2=shiftBoardDiagonalDownLeft(p_bb,-2), P3=shiftBoardDiagonalDownLeft(p_bb,-3);
+    let O_n1=shiftBoardDiagonalDownLeft(o_bb,1), E_p4=shiftBoardDiagonalDownLeft(e_bb,-4);
+    let df1=BitwiseANDBoardArrays(O_n1,P0); df1=BitwiseANDBoardArrays(df1,P1); df1=BitwiseANDBoardArrays(df1,P2); df1=BitwiseANDBoardArrays(df1,P3); df1=BitwiseANDBoardArrays(df1,E_p4);
+    let E_n1=shiftBoardDiagonalDownLeft(e_bb,1), O_p4=shiftBoardDiagonalDownLeft(o_bb,-4);
+    let df2=BitwiseANDBoardArrays(E_n1,P0); df2=BitwiseANDBoardArrays(df2,P1); df2=BitwiseANDBoardArrays(df2,P2); df2=BitwiseANDBoardArrays(df2,P3); df2=BitwiseANDBoardArrays(df2,O_p4);
+    return BitwiseORBoardArrays(df1,df2);
+}
+
+
+// Iterative pattern analysis (still used by parts of heuristic, and as fallback)
+function analyzePatternOnLine(r, c, dr, dc, player) {
+    const opponent = (player === PLAYER_BLACK) ? PLAYER_WHITE : PLAYER_BLACK;
+    let current_r = r; let current_c = c;
+    for (let i = 1; i < WINNING_LENGTH; i++) {
+        const prev_r = r - i * dr; const prev_c = c - i * dc;
+        if (getCellStatus(prev_r, prev_c) === player) { current_r = prev_r; current_c = prev_c; }
+        else break;
+    }
+    const start_r = current_r; const start_c = current_c;
+    let stonesInRow = 0;
+    for (let i = 0; i < BOARD_SIZE; i++) {
+        const curR = start_r + i * dr; const curC = start_c + i * dc;
+        if (getCellStatus(curR, curC) === player) stonesInRow++; else break;
+    }
+    if (stonesInRow === 0) return null;
+    const end_r = start_r + (stonesInRow - 1) * dr; const end_c = start_c + (stonesInRow - 1) * dc;
+    const p1_status_val = getCellStatus(start_r - dr, start_c - dc);
+    const p2_status_val = getCellStatus(end_r + dr, end_c + dc);
+
+    if (stonesInRow >= WINNING_LENGTH) return { type: PT_FIVE, length: stonesInRow, start_r, start_c, end_r, end_c };
+    if (stonesInRow === 4) {
+        if (p1_status_val === EMPTY && p2_status_val === EMPTY) return { type: PT_LIVE_FOUR, length: 4, start_r, start_c, end_r, end_c };
+        if ((p1_status_val === EMPTY && (p2_status_val === opponent || p2_status_val === 'EDGE')) ||
+            (p2_status_val === EMPTY && (p1_status_val === opponent || p1_status_val === 'EDGE'))) return { type: PT_DEAD_FOUR, length: 4, start_r, start_c, end_r, end_c };
+    }
+    if (stonesInRow === 3) {
+        if (p1_status_val === EMPTY && p2_status_val === EMPTY) return { type: PT_LIVE_THREE, length: 3, start_r, start_c, end_r, end_c };
+        if ((p1_status_val === EMPTY && (p2_status_val === opponent || p2_status_val === 'EDGE')) ||
+            (p2_status_val === EMPTY && (p1_status_val === opponent || p1_status_val === 'EDGE'))) return { type: PT_DEAD_THREE, length: 3, start_r, start_c, end_r, end_c };
+    }
+    if (stonesInRow === 2) {
+        if (p1_status_val === EMPTY && p2_status_val === EMPTY) return { type: PT_LIVE_TWO, length: 2, start_r, start_c, end_r, end_c };
+        if ((p1_status_val === EMPTY && (p2_status_val === opponent || p2_status_val === 'EDGE')) ||
+            (p2_status_val === EMPTY && (p1_status_val === opponent || p1_status_val === 'EDGE'))) return { type: PT_DEAD_TWO, length: 2, start_r, start_c, end_r, end_c };
+    }
+    return null;
+}
+
+// Calculates offensive score for a player using global bitboards
+function calculateScoreForPlayerOffensive(player, heuristicLevel) {
+    let totalScore = 0;
+    const playerBB = bitboards[player];
+    const opponent = (player === PLAYER_BLACK) ? PLAYER_WHITE : PLAYER_BLACK;
+    const opponentBB = bitboards[opponent];
+    const emptyBB = computeEmptyCellsBitboard();
+
+    // --- Integrate Bitwise Pattern Detection ---
+    // FIVES (Handled by checkWinForPlayer returning massive score in evaluateBoard, but can add here if needed for non-terminal states)
+    // totalScore += PopCountBoardArray(detectHorizontalFiveBitwise(playerBB)) * PATTERN_SCORES[PT_FIVE].offensive;
+    // ... (and other directions for five)
+
+    // LIVE FOURS
+    let score_lf = PATTERN_SCORES[PT_LIVE_FOUR].offensive;
+    if (heuristicLevel === 'novice' || heuristicLevel === 'apprentice') score_lf = 0;
+    if (score_lf > 0) {
+        totalScore += PopCountBoardArray(detectHorizontalLiveFourBitwise(playerBB, emptyBB)) * score_lf;
+        totalScore += PopCountBoardArray(detectVerticalLiveFourBitwise(playerBB, emptyBB)) * score_lf;
+        totalScore += PopCountBoardArray(detectDiagonalDownRightLiveFourBitwise(playerBB, emptyBB)) * score_lf;
+        totalScore += PopCountBoardArray(detectDiagonalDownLeftLiveFourBitwise(playerBB, emptyBB)) * score_lf;
     }
 
-    const range = 1; // Consider only adjacent cells (range 1) for higher performance. Can be increased to 2 if needed.
+    // DEAD FOURS
+    let score_df = PATTERN_SCORES[PT_DEAD_FOUR].offensive;
+    if (heuristicLevel === 'novice' || heuristicLevel === 'apprentice') score_df = 0;
+    if (score_df > 0) {
+        totalScore += PopCountBoardArray(detectHorizontalDeadFourBitwise(playerBB, opponentBB, emptyBB)) * score_df;
+        totalScore += PopCountBoardArray(detectVerticalDeadFourBitwise(playerBB, opponentBB, emptyBB)) * score_df;
+        totalScore += PopCountBoardArray(detectDiagonalDownRightDeadFourBitwise(playerBB, opponentBB, emptyBB)) * score_df;
+        totalScore += PopCountBoardArray(detectDiagonalDownLeftDeadFourBitwise(playerBB, opponentBB, emptyBB)) * score_df;
+    }
 
-    for (let r = 0; r < BOARD_SIZE; r++) {
-        for (let c = 0; c < BOARD_SIZE; c++) {
-            if (board[r][c] !== EMPTY) { // For each existing stone
-                for (let dr = -range; dr <= range; dr++) {
-                    for (let dc = -range; dc <= range; dc++) {
-                        if (dr === 0 && dc === 0) continue;
-                        const nr = r + dr;
-                        const nc = c + dc;
-                        if (isInBounds(nc, nr) && board[nr][nc] === EMPTY && !candidateMap[nr][nc]) {
-                            candidateMap[nr][nc] = true;
-                            moves.push({ x: nc, y: nr });
+    // TODO: Implement and integrate bitwise for Threes and Twos.
+    // For now, use iterative `analyzePatternOnLine` for Threes, Twos, and to catch any missed by current bitwise.
+    // This part makes the heuristic HYBRID (bitwise for Fours, iterative for others).
+    const countedIterativePatterns = new Set();
+    const staticPatternDirections = [ { dr: 0, dc: 1 }, { dr: 1, dc: 0 }, { dr: 1, dc: 1 }, { dr: 1, dc: -1 } ];
+     for (let r_board = 0; r_board < BOARD_SIZE; r_board++) {
+        for (let c_board = 0; c_board < BOARD_SIZE; c_board++) {
+            if (getCellStatus(r_board, c_board) === player) {
+                for (const dir of staticPatternDirections) {
+                    const cellBefore_r = r_board - dir.dr; const cellBefore_c = c_board - dir.dc;
+                    if (getCellStatus(cellBefore_r, cellBefore_c) === player) continue;
+                    const patternInfo = analyzePatternOnLine(r_board, c_board, dir.dr, dir.dc, player);
+                    if (patternInfo && (patternInfo.type === PT_LIVE_THREE || patternInfo.type === PT_DEAD_THREE || patternInfo.type === PT_LIVE_TWO || patternInfo.type === PT_DEAD_TWO)) {
+                        let key_r1 = patternInfo.start_r, key_c1 = patternInfo.start_c, key_r2 = patternInfo.end_r, key_c2 = patternInfo.end_c;
+                        if (patternInfo.start_r > patternInfo.end_r || (patternInfo.start_r === patternInfo.end_r && patternInfo.start_c > patternInfo.end_c)) {
+                            key_r1 = patternInfo.end_r; key_c1 = patternInfo.end_c; key_r2 = patternInfo.start_r; key_c2 = patternInfo.start_c;
+                        }
+                        const patternKey = `${patternInfo.type}:${key_r1},${key_c1}:${key_r2},${key_c2}`;
+                        if (!countedIterativePatterns.has(patternKey)) {
+                            let scoreToAdd = PATTERN_SCORES[patternInfo.type] ? PATTERN_SCORES[patternInfo.type].offensive : 0;
+                            if (heuristicLevel === 'novice' && (patternInfo.type === PT_LIVE_THREE || patternInfo.type === PT_DEAD_THREE)) scoreToAdd = 0;
+                            // Apprentice can see threes.
+                            if (scoreToAdd > 0) { totalScore += scoreToAdd; countedIterativePatterns.add(patternKey); }
                         }
                     }
                 }
@@ -279,95 +514,298 @@ function getPossibleMoves(board) {
         }
     }
 
-    // Fallback if no moves are found adjacent to existing stones (e.g. board is nearly full with isolated empty spots)
-    // This also handles the case where the board is full and occupiedCount == BOARD_SIZE * BOARD_SIZE, returning an empty moves list.
-    if (moves.length === 0 && occupiedCount < BOARD_SIZE * BOARD_SIZE) {
-        for (let r_fb = 0; r_fb < BOARD_SIZE; r_fb++) {
-            for (let c_fb = 0; c_fb < BOARD_SIZE; c_fb++) {
-                if (board[r_fb][c_fb] === EMPTY) {
-                    moves.push({ x: c_fb, y: r_fb });
+    // Dynamic Double Three check (remains iterative for now)
+    let doubleThreeScoreToAdd = PATTERN_SCORES[PT_DOUBLE_THREE].offensive;
+    if (heuristicLevel === 'novice' || heuristicLevel === 'apprentice') doubleThreeScoreToAdd = 0;
+
+    if (doubleThreeScoreToAdd > 0) {
+        for (let r_empty = 0; r_empty < BOARD_SIZE; r_empty++) {
+            for (let c_empty = 0; c_empty < BOARD_SIZE; c_empty++) {
+                if (getCellStatus(r_empty, c_empty) === EMPTY) {
+                    setCellBit(bitboards[player], r_empty, c_empty);
+                    let liveThreesFormedByThisMove = 0; const liveThreeLocations = [];
+                    for (const dir of staticPatternDirections) {
+                        const patternInfo = analyzePatternOnLine(r_empty, c_empty, dir.dr, dir.dc, player);
+                        if (patternInfo && patternInfo.type === PT_LIVE_THREE) {
+                            let key_r1 = patternInfo.start_r, key_c1 = patternInfo.start_c, key_r2 = patternInfo.end_r, key_c2 = patternInfo.end_c;
+                            if (patternInfo.start_r > patternInfo.end_r || (patternInfo.start_r === patternInfo.end_r && patternInfo.start_c > patternInfo.end_c)) {
+                                key_r1 = patternInfo.end_r; key_c1 = patternInfo.end_c; key_r2 = patternInfo.start_r; key_c2 = patternInfo.start_c;
+                            }
+                            const liveThreeKey = `${key_r1},${key_c1}:${key_r2},${key_c2}`;
+                            if (!liveThreeLocations.includes(liveThreeKey)) { liveThreesFormedByThisMove++; liveThreeLocations.push(liveThreeKey); }
+                        }
+                    }
+                    clearCellBit(bitboards[player], r_empty, c_empty);
+                    if (liveThreesFormedByThisMove >= 2) {
+                        totalScore += doubleThreeScoreToAdd;
+                        // Optimization: if one double three threat is found, it's often enough for heuristic.
+                        // Or sum all such threats. For now, summing.
+                    }
                 }
+            }
+        }
+    }
+    return totalScore;
+}
+
+// Fully bitwise checkWinForPlayer for fives
+function checkWinForPlayer(player) {
+    const playerBB = bitboards[player];
+    if (PopCountBoardArray(detectHorizontalFiveBitwise(playerBB)) > 0) return true;
+    if (PopCountBoardArray(detectVerticalFiveBitwise(playerBB)) > 0) return true;
+    if (PopCountBoardArray(detectDiagonalDownRightFiveBitwise(playerBB)) > 0) return true;
+    if (PopCountBoardArray(detectDiagonalDownLeftFiveBitwise(playerBB)) > 0) return true;
+    return false;
+}
+
+// scoreMoveHeuristically using global bitboards
+function scoreMoveHeuristically(r_move, c_move, player) {
+    let heuristicScore = 0;
+    const opponent = (player === PLAYER_BLACK) ? PLAYER_WHITE : PLAYER_BLACK;
+    const directions = [ { dr: 0, dc: 1 }, { dr: 1, dc: 0 }, { dr: 1, dc: 1 }, { dr: 1, dc: -1 } ];
+
+    setCellBit(bitboards[player], r_move, c_move);
+    if (checkWinForPlayer(player)) {
+        clearCellBit(bitboards[player], r_move, c_move);
+        return PATTERN_SCORES[PT_FIVE].offensive * 10;
+    }
+    let offensiveScore = 0; const countedPlayerPatterns = new Set();
+    // This part should ideally use the new bitwise detectors for Fours, Threes, Twos for speed.
+    // For now, it uses analyzePatternOnLine for simplicity in this step.
+    for (const dir of directions) {
+        const patternInfo = analyzePatternOnLine(r_move, c_move, dir.dr, dir.dc, player);
+        if (patternInfo && PATTERN_SCORES[patternInfo.type]) {
+            let key_r1 = patternInfo.start_r, key_c1 = patternInfo.start_c, key_r2 = patternInfo.end_r, key_c2 = patternInfo.end_c;
+            if (patternInfo.start_r > patternInfo.end_r || (patternInfo.start_r === patternInfo.end_r && patternInfo.start_c > patternInfo.end_c)) {
+                key_r1 = patternInfo.end_r; key_c1 = patternInfo.end_c; key_r2 = patternInfo.start_r; key_c2 = patternInfo.start_c;
+            }
+            const patternKey = `${patternInfo.type}:${key_r1},${key_c1}:${key_r2},${key_c2}`;
+            if (!countedPlayerPatterns.has(patternKey)) { offensiveScore += PATTERN_SCORES[patternInfo.type].offensive; countedPlayerPatterns.add(patternKey); }
+        }
+    }
+    let liveThreesFormedCount = 0; const liveThreeKeys = new Set();
+    for (const dir of directions) {
+        const patternInfo = analyzePatternOnLine(r_move, c_move, dir.dr, dir.dc, player);
+        if (patternInfo && patternInfo.type === PT_LIVE_THREE) {
+            let key_r1 = patternInfo.start_r, key_c1 = patternInfo.start_c, key_r2 = patternInfo.end_r, key_c2 = patternInfo.end_c;
+             if (patternInfo.start_r > patternInfo.end_r || (patternInfo.start_r === patternInfo.end_r && patternInfo.start_c > patternInfo.end_c)) {
+                key_r1 = patternInfo.end_r; key_c1 = patternInfo.end_c; key_r2 = patternInfo.start_r; key_c2 = patternInfo.start_c;
+            }
+            const ltKey = `${key_r1},${key_c1}:${key_r2},${key_c2}`;
+            if (!liveThreeKeys.has(ltKey)) { liveThreesFormedCount++; liveThreeKeys.add(ltKey); }
+        }
+    }
+    if (liveThreesFormedCount >= 2) offensiveScore += PATTERN_SCORES[PT_DOUBLE_THREE].offensive;
+    clearCellBit(bitboards[player], r_move, c_move);
+
+    setCellBit(bitboards[opponent], r_move, c_move);
+    let defensiveScore = 0;
+    if (checkWinForPlayer(opponent)) {
+        clearCellBit(bitboards[opponent], r_move, c_move);
+        return PATTERN_SCORES[PT_FIVE].defensive * 9;
+    }
+    const countedOpponentPatterns = new Set();
+    for (const dir of directions) {
+        const patternInfo = analyzePatternOnLine(r_move, c_move, dir.dr, dir.dc, opponent);
+        if (patternInfo && PATTERN_SCORES[patternInfo.type]) {
+            let key_r1 = patternInfo.start_r, key_c1 = patternInfo.start_c, key_r2 = patternInfo.end_r, key_c2 = patternInfo.end_c;
+            if (patternInfo.start_r > patternInfo.end_r || (patternInfo.start_r === patternInfo.end_r && patternInfo.start_c > patternInfo.end_c)) {
+                key_r1 = patternInfo.end_r; key_c1 = patternInfo.end_c; key_r2 = patternInfo.start_r; key_c2 = patternInfo.start_c;
+            }
+            const patternKey = `${patternInfo.type}:${key_r1},${key_c1}:${key_r2},${key_c2}`;
+            if (!countedOpponentPatterns.has(patternKey)) { defensiveScore += PATTERN_SCORES[patternInfo.type].defensive; countedOpponentPatterns.add(patternKey); }
+        }
+    }
+    let oppLiveThreesFormedCount = 0; const oppLiveThreeKeys = new Set();
+    for (const dir of directions) {
+        const patternInfo = analyzePatternOnLine(r_move, c_move, dir.dr, dir.dc, opponent);
+        if (patternInfo && patternInfo.type === PT_LIVE_THREE) {
+            let key_r1 = patternInfo.start_r, key_c1 = patternInfo.start_c, key_r2 = patternInfo.end_r, key_c2 = patternInfo.end_c;
+            if (patternInfo.start_r > patternInfo.end_r || (patternInfo.start_r === patternInfo.end_r && patternInfo.start_c > patternInfo.end_c)) {
+                key_r1 = patternInfo.end_r; key_c1 = patternInfo.end_c; key_r2 = patternInfo.start_r; key_c2 = patternInfo.start_c;
+            }
+            const ltKey = `${key_r1},${key_c1}:${key_r2},${key_c2}`;
+            if (!oppLiveThreeKeys.has(ltKey)) { oppLiveThreesFormedCount++; oppLiveThreeKeys.add(ltKey); }
+        }
+    }
+    if (oppLiveThreesFormedCount >= 2) defensiveScore += PATTERN_SCORES[PT_DOUBLE_THREE].defensive;
+    clearCellBit(bitboards[opponent], r_move, c_move);
+
+    heuristicScore = offensiveScore + defensiveScore;
+    for (let dr_adj = -1; dr_adj <= 1; dr_adj++) {
+        for (let dc_adj = -1; dc_adj <= 1; dc_adj++) {
+            if (dr_adj === 0 && dc_adj === 0) continue;
+            if (getCellStatus(r_move + dr_adj, c_move + dc_adj) !== EMPTY && getCellStatus(r_move + dr_adj, c_move + dc_adj) !== 'EDGE') {
+                heuristicScore += 0.5;
+            }
+        }
+    }
+    return heuristicScore;
+}
+
+// Modified getPossibleMoves to use global bitboards
+function getPossibleMoves() {
+    const moves = []; let occupiedCount = 0;
+    const candidateMap = Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill(false));
+    for (let r = 0; r < BOARD_SIZE; r++) for (let c = 0; c < BOARD_SIZE; c++) if (getCellStatus(r, c) !== EMPTY) occupiedCount++;
+    if (occupiedCount === 0) { moves.push({ x: Math.floor(BOARD_SIZE / 2), y: Math.floor(BOARD_SIZE / 2) }); return moves; }
+    const range = 2;
+    for (let r = 0; r < BOARD_SIZE; r++) {
+        for (let c = 0; c < BOARD_SIZE; c++) {
+            if (getCellStatus(r, c) !== EMPTY) {
+                for (let dr = -range; dr <= range; dr++) for (let dc = -range; dc <= range; dc++) {
+                    if (dr === 0 && dc === 0) continue;
+                    const nr = r + dr; const nc = c + dc;
+                    if (isInBounds(nc, nr) && getCellStatus(nr, nc) === EMPTY && !candidateMap[nr][nc]) {
+                        candidateMap[nr][nc] = true; moves.push({ x: nc, y: nr });
+                    }
+                }
+            }
+        }
+    }
+    if (moves.length === 0 && occupiedCount < BOARD_SIZE * BOARD_SIZE) {
+        for (let r_fb = 0; r_fb < BOARD_SIZE; r_fb++) for (let c_fb = 0; c_fb < BOARD_SIZE; c_fb++) {
+            if (getCellStatus(r_fb, c_fb) === EMPTY && !candidateMap[r_fb][c_fb]) {
+                moves.push({ x: c_fb, y: r_fb }); candidateMap[r_fb][c_fb] = true;
             }
         }
     }
     return moves;
 }
 
-function makeTemporaryMove(originalBoard, x, y, player) {
-    const tempBoard = originalBoard.map(row => [...row]); // Deep copy
-    if (isInBounds(x, y) && tempBoard[y][x] === EMPTY) {
-        tempBoard[y][x] = player;
-    }
-    return tempBoard;
+// Evaluate board state using global bitboards
+function evaluateBoard(aiPlayer = PLAYER_WHITE, heuristicLevel) {
+    const humanPlayer = (aiPlayer === PLAYER_BLACK) ? PLAYER_WHITE : PLAYER_BLACK;
+    const aiOffensiveScore = calculateScoreForPlayerOffensive(aiPlayer, heuristicLevel);
+    const humanOffensiveScore = calculateScoreForPlayerOffensive(humanPlayer, heuristicLevel);
+    const fiveScore = PATTERN_SCORES[PT_FIVE].offensive;
+    if (calculateScoreForPlayerOffensive(aiPlayer, 'master') >= fiveScore) return fiveScore * 10;
+    if (calculateScoreForPlayerOffensive(humanPlayer, 'master') >= fiveScore) return -fiveScore * 10;
+    return aiOffensiveScore - humanOffensiveScore;
 }
 
-// --- Advanced Pattern Detection for Omniscience ---
+// Minimax using global bitboards
+function findBestMove(currentSearchDepth, heuristicLevel, alpha, beta, maximizingPlayer, aiPlayer, currentHash) {
+    const originalAlpha = alpha;
+    if (transpositionTable.has(currentHash)) {
+        const entry = transpositionTable.get(currentHash);
+        if (entry.depth >= currentSearchDepth) {
+            if (entry.flag === TT_FLAG_EXACT) return { score: entry.score, move: entry.bestMove };
+            if (entry.flag === TT_FLAG_LOWERBOUND) alpha = Math.max(alpha, entry.score);
+            else if (entry.flag === TT_FLAG_UPPERBOUND) beta = Math.min(beta, entry.score);
+            if (alpha >= beta) return { score: entry.score, move: entry.bestMove };
+        }
+    }
 
-/**
- * Checks if placing a stone at (x,y) for player creates a line of 'length' stones.
- * Optionally checks for open ends.
- * @param {Array<Array<number>>} board The game board.
- * @param {number} r Row index.
- * @param {number} c Column index.
- * @param {number} player The player making the move.
- * @param {number} length The required length of the line.
- * @param {boolean} [checkOpenStart=false] If true, checks if the start of the line is open.
- * @param {boolean} [checkOpenEnd=false] If true, checks if the end of the line is open.
- * @returns {boolean} True if the pattern is formed, false otherwise.
- */
-function checkLine(board, r, c, player, length, checkOpenStart = false, checkOpenEnd = false) {
-    const directions = [
-        { dr: 0, dc: 1 }, { dr: 1, dc: 0 }, // Horizontal, Vertical
-        { dr: 1, dc: 1 }, { dr: 1, dc: -1 }  // Diagonal
-    ];
+    if (currentSearchDepth === 0 || isGameOver(aiPlayer)) {
+        return { score: evaluateBoard(aiPlayer, heuristicLevel), move: null };
+    }
+    let possibleMoves = getPossibleMoves();
+    if (possibleMoves.length === 0) {
+        return { score: evaluateBoard(aiPlayer, heuristicLevel), move: null };
+    }
 
-    for (const dir of directions) {
-        // Check in one direction (e.g., right, down, down-right, down-left)
-        // Then check in the opposite direction and combine
-        for (let i = 0; i < length; i++) { // i is the number of stones *before* the current placement (r,c) along the line
-            const startR = r - i * dir.dr;
-            const startC = c - i * dir.dc;
+    let ttBestMoveFromEntry = null;
+    if (transpositionTable.has(currentHash)) {
+        const entry = transpositionTable.get(currentHash);
+        if (entry.bestMove) {
+            ttBestMoveFromEntry = entry.bestMove;
+            let foundInPossible = false;
+            for(const m of possibleMoves) if(m.x === ttBestMoveFromEntry.x && m.y === ttBestMoveFromEntry.y) { foundInPossible = true; break; }
+            if (foundInPossible) {
+                possibleMoves = possibleMoves.filter(m => !(m.x === ttBestMoveFromEntry.x && m.y === ttBestMoveFromEntry.y));
+                possibleMoves.unshift(ttBestMoveFromEntry);
+            } else ttBestMoveFromEntry = null;
+        }
+    }
 
-            let currentLength = 0;
-            let openEnds = 0;
-            let actualStones = []; // Store {r, c} of stones in the line
-
-            // Check towards dir
-            for (let k = 0; k < length; k++) {
-                const curR = startR + k * dir.dr;
-                const curC = startC + k * dir.dc;
-
-                if (!isInBounds(curC, curR)) break;
-                if (k === i && board[curR][curC] !== EMPTY && board[curR][curC] !== player) break; // The target spot must be empty or player's
-                if (k !== i && board[curR][curC] !== player) break; // Other spots must be player's
-
-                if (board[curR][curC] === player || (k === i && board[curR][curC] === EMPTY) ) {
-                     if (k===i) actualStones.push({r:curR, c:curC, isHypothetical:true}); // Mark the hypothetical stone
-                     else actualStones.push({r:curR, c:curC});
-                    currentLength++;
-                } else {
-                    break;
-                }
+    const movesToScoreSort = ttBestMoveFromEntry ? possibleMoves.slice(1) : possibleMoves;
+    if (currentSearchDepth > 1 && movesToScoreSort.length > 1) {
+        const currentPlayerForSort = maximizingPlayer ? aiPlayer : ((aiPlayer === PLAYER_BLACK) ? PLAYER_WHITE : PLAYER_BLACK);
+        const scoredSortedMoves = movesToScoreSort.map(move => {
+            let score;
+            if (getCellStatus(move.y, move.x) === EMPTY) {
+                setCellBit(bitboards[currentPlayerForSort], move.y, move.x);
+                score = scoreMoveHeuristically(move.y, move.x, currentPlayerForSort);
+                clearCellBit(bitboards[currentPlayerForSort], move.y, move.x);
+            } else {
+                score = -Infinity;
             }
+            return { move: move, score: score };
+        }).sort((a, b) => b.score - a.score);
+        const sortedMovesPortion = scoredSortedMoves.map(sm => sm.move);
+        possibleMoves = ttBestMoveFromEntry ? [ttBestMoveFromEntry, ...sortedMovesPortion] : sortedMovesPortion;
+    }
 
+    let bestMoveForThisNode = null; let bestValue;
+    if (maximizingPlayer) {
+        bestValue = -Infinity;
+        for (const move of possibleMoves) {
+            setCellBit(bitboards[aiPlayer], move.y, move.x);
+            const newHash = updateZobristHash(currentHash, move.y, move.x, aiPlayer);
+            const evalNode = findBestMove(currentSearchDepth - 1, heuristicLevel, alpha, beta, false, aiPlayer, newHash);
+            clearCellBit(bitboards[aiPlayer], move.y, move.x);
+            if (evalNode.score > bestValue) { bestValue = evalNode.score; bestMoveForThisNode = move; }
+            alpha = Math.max(alpha, bestValue);
+            if (beta <= alpha) break;
+        }
+    } else {
+        bestValue = Infinity; const opponentPlayer = (aiPlayer === PLAYER_BLACK) ? PLAYER_WHITE : PLAYER_BLACK;
+        for (const move of possibleMoves) {
+            setCellBit(bitboards[opponentPlayer], move.y, move.x);
+            const newHash = updateZobristHash(currentHash, move.y, move.x, opponentPlayer);
+            const evalNode = findBestMove(currentSearchDepth - 1, heuristicLevel, alpha, beta, true, aiPlayer, newHash);
+            clearCellBit(bitboards[opponentPlayer], move.y, move.x);
+            if (evalNode.score < bestValue) { bestValue = evalNode.score; bestMoveForThisNode = move; }
+            beta = Math.min(beta, bestValue);
+            if (beta <= alpha) break;
+        }
+    }
+    let flag;
+    if (bestValue <= originalAlpha) flag = TT_FLAG_UPPERBOUND;
+    else if (bestValue >= beta) flag = TT_FLAG_LOWERBOUND;
+    else flag = TT_FLAG_EXACT;
+    transpositionTable.set(currentHash, { score: bestValue, depth: currentSearchDepth, flag: flag, bestMove: bestMoveForThisNode });
+    return { score: bestValue, move: bestMoveForThisNode };
+}
+
+// Check if game is over using global bitboards
+function isGameOver(aiPlayer) {
+    if (checkWinForPlayer(aiPlayer)) return true;
+    const humanPlayer = (aiPlayer === PLAYER_BLACK) ? PLAYER_WHITE : PLAYER_BLACK;
+    if (checkWinForPlayer(humanPlayer)) return true;
+    for (let r = 0; r < BOARD_SIZE; r++) for (let c = 0; c < BOARD_SIZE; c++) if (getCellStatus(r,c) === EMPTY) return false;
+    return true;
+}
+
+// --- Omniscience functions (remain largely unchanged, use 2D arrays and getCellStatusFromArray) ---
+function getCellStatusFromArray(boardArray, r, c) {
+    if (!isInBounds(c, r)) return 'EDGE';
+    if (boardArray[r][c] === EMPTY) return 'EMPTY';
+    return boardArray[r][c];
+}
+function checkLine(board, r, c, player, length, checkOpenStart = false, checkOpenEnd = false) {
+    const directions = [ { dr: 0, dc: 1 }, { dr: 1, dc: 0 }, { dr: 1, dc: 1 }, { dr: 1, dc: -1 } ];
+    for (const dir of directions) {
+        for (let i = 0; i < length; i++) {
+            const startR = r - i * dir.dr; const startC = c - i * dir.dc;
+            let currentLength = 0;
+            for (let k = 0; k < length; k++) {
+                const curR = startR + k * dir.dr; const curC = startC + k * dir.dc;
+                if (!isInBounds(curC, curR)) break;
+                if (k === i && getCellStatusFromArray(board, curR, curC) !== 'EMPTY' && getCellStatusFromArray(board, curR, curC) !== player) break;
+                if (k !== i && getCellStatusFromArray(board, curR, curC) !== player) break;
+                if (getCellStatusFromArray(board, curR, curC) === player || (k === i && getCellStatusFromArray(board, curR, curC) === 'EMPTY') ) {
+                    currentLength++;
+                } else { break; }
+            }
             if (currentLength === length) {
                 let lineForms = true;
                 if (checkOpenStart || checkOpenEnd) {
-                    const beforeR = startR - dir.dr;
-                    const beforeC = startC - dir.dc;
-                    const afterR = startR + length * dir.dr;
-                    const afterC = startC + length * dir.dc;
-
-                    let isOpenStart = false;
-                    if (isInBounds(beforeC, beforeR) && board[beforeR][beforeC] === EMPTY) {
-                        isOpenStart = true;
-                    }
-
-                    let isOpenEnd = false;
-                    if (isInBounds(afterC, afterR) && board[afterR][afterC] === EMPTY) {
-                        isOpenEnd = true;
-                    }
-
+                    const beforeR = startR - dir.dr; const beforeC = startC - dir.dc;
+                    const afterR = startR + length * dir.dr; const afterC = startC + length * dir.dc;
+                    let isOpenStart = (isInBounds(beforeC, beforeR) && getCellStatusFromArray(board, beforeR, beforeC) === 'EMPTY');
+                    let isOpenEnd = (isInBounds(afterC, afterR) && getCellStatusFromArray(board, afterR, afterC) === 'EMPTY');
                     if (checkOpenStart && !isOpenStart) lineForms = false;
                     if (checkOpenEnd && !isOpenEnd) lineForms = false;
                 }
@@ -377,578 +815,261 @@ function checkLine(board, r, c, player, length, checkOpenStart = false, checkOpe
     }
     return false;
 }
-
-
-/**
- * Checks if placing stone at (r,c) for player creates a five-in-a-row.
- */
-function checkFive(board, r, c, player) {
-    // Temporarily place stone for check
-    board[r][c] = player;
-    let wins = false;
-    // Use existing checkWinForPlayer but adapt it if it checks the whole board
-    // For now, let's use a localized check around (r,c)
-    const directions = [{dx:1,dy:0},{dx:0,dy:1},{dx:1,dy:1},{dx:1,dy:-1}];
-    for (const dir of directions) {
-        let count = 1; // Count the stone we just placed
-        // Check in positive direction
-        for (let i = 1; i < WINNING_LENGTH; i++) {
-            const newR = r + i * dir.dy;
-            const newC = c + i * dir.dx;
-            if (isInBounds(newC, newR) && board[newR][newC] === player) count++; else break;
-        }
-        // Check in negative direction
-        for (let i = 1; i < WINNING_LENGTH; i++) {
-            const newR = r - i * dir.dy;
-            const newC = c - i * dir.dx;
-            if (isInBounds(newC, newR) && board[newR][newC] === player) count++; else break;
-        }
-        if (count >= WINNING_LENGTH) {
-            wins = true;
-            break;
-        }
-    }
-    board[r][c] = EMPTY; // Revert
-    return wins;
-}
-
-/**
- * Checks if placing stone at (r,c) for player creates a line of four.
- * This can be an open four or a closed four (where one end is blocked by opponent or edge).
- * For omniscience, we just need to know if it *becomes* a four.
- */
-function checkLineOfFour(board, r, c, player) {
-    board[r][c] = player;
-    let isFour = false;
+function checkFiveOmni(boardArray, r, c, player) {
+    boardArray[r][c] = player; let wins = false;
     const directions = [{dx:1,dy:0},{dx:0,dy:1},{dx:1,dy:1},{dx:1,dy:-1}];
     for (const dir of directions) {
         let count = 1;
-        for (let i = 1; i < 4; i++) { // Check up to 3 more stones in one dir
-            if (isInBounds(c + i * dir.dx, r + i * dir.dy) && board[r + i * dir.dy][c + i * dir.dx] === player) count++; else break;
-        }
-        for (let i = 1; i < 4; i++) { // Check up to 3 more stones in other dir
-            if (isInBounds(c - i * dir.dx, r - i * dir.dy) && board[r - i * dir.dy][c - i * dir.dx] === player) count++; else break;
-        }
-        if (count >= 4) { // If placing the stone makes it 4 or more (e.g. completing a 4, or extending a 3 to 4)
-            isFour = true;
-            break;
-        }
+        for (let i = 1; i < WINNING_LENGTH; i++) { const newR = r + i * dir.dy; const newC = c + i * dir.dx; if (isInBounds(newC, newR) && boardArray[newR][newC] === player) count++; else break; }
+        for (let i = 1; i < WINNING_LENGTH; i++) { const newR = r - i * dir.dy; const newC = c - i * dir.dx; if (isInBounds(newC, newR) && boardArray[newR][newC] === player) count++; else break; }
+        if (count >= WINNING_LENGTH) { wins = true; break; }
     }
-    board[r][c] = EMPTY; // Revert before returning
-
+    boardArray[r][c] = EMPTY; return wins;
+}
+function checkLineOfFourOmni(board, r, c, player) {
+    board[r][c] = player; let isFour = false;
+    const directions = [{dx:1,dy:0},{dx:0,dy:1},{dx:1,dy:1},{dx:1,dy:-1}];
+    for (const dir of directions) {
+        let count = 1;
+        for (let i = 1; i < 4; i++) { if (isInBounds(c + i * dir.dx, r + i * dir.dy) && board[r + i * dir.dy][c + i * dir.dx] === player) count++; else break; }
+        for (let i = 1; i < 4; i++) { if (isInBounds(c - i * dir.dx, r - i * dir.dy) && board[r - i * dir.dy][c - i * dir.dx] === player) count++; else break; }
+        if (count >= 4) { isFour = true; break; }
+    }
+    board[r][c] = EMPTY;
     if (isFour) {
-        // Now, check if this line of four can extend to five
-        // The 'isFour' check confirmed a line of 4 exists involving (r,c)
-        // We need to find that line and check its ends.
-        // This part is tricky because checkLineOfFour doesn't return the line itself.
-        // For simplicity in this step, we'll re-evaluate from (r,c)
-        // A more optimized approach would integrate this into the count loop.
-        board[r][c] = player; // Place stone again for extend check
-        let canBecomeFive = false;
+        board[r][c] = player; let canBecomeFive = false;
         for (const dir of directions) {
-            // Check one side for the line
             let stones = [{r,c}];
-            for (let i = 1; i < 4; i++) { // Check 3 more in one dir
-                const nextR = r + i * dir.dy;
-                const nextC = c + i * dir.dx;
-                if (isInBounds(nextC, nextR) && board[nextR][nextC] === player) {
-                    stones.push({r: nextR, c: nextC});
-                } else break;
-            }
-             // Check other side for the line
-            for (let i = 1; i < 4; i++) { // Check 3 more in other dir
-                const prevR = r - i * dir.dy;
-                const prevC = c - i * dir.dx;
-                 if (isInBounds(prevC, prevR) && board[prevR][prevC] === player) {
-                    stones.unshift({r: prevR, c: prevC}); // Add to beginning
-                } else break;
-            }
-
-            if (stones.length >= 4) { // We found a line of at least 4 stones including (r,c)
-                // Sort stones by row, then col to get consistent start/end
-                stones.sort((a,b) => a.r === b.r ? a.c - b.c : a.r - b.r);
-                // If dir is vertical, sort by col then row
-                if (dir.dx === 0) stones.sort((a,b) => a.c === b.c ? a.r - b.r : a.c - b.c);
-
-
-                // We need to iterate through all actual 4-stone subsegments
+            for (let i = 1; i < 4; i++) { const nextR = r + i * dir.dy; const nextC = c + i * dir.dx; if (isInBounds(nextC, nextR) && board[nextR][nextC] === player) stones.push({r: nextR, c: nextC}); else break; }
+            for (let i = 1; i < 4; i++) { const prevR = r - i * dir.dy; const prevC = c - i * dir.dx; if (isInBounds(prevC, prevR) && board[prevR][prevC] === player) stones.unshift({r: prevR, c: prevC}); else break; }
+            if (stones.length >= 4) {
+                stones.sort((a,b) => a.r === b.r ? a.c - b.c : a.r - b.r); if (dir.dx === 0) stones.sort((a,b) => a.c === b.c ? a.r - b.r : a.c - b.c);
                 for (let i = 0; i <= stones.length - 4; i++) {
-                    const subSegment = stones.slice(i, i + 4);
-
-                    // Determine the actual direction of this subSegment
-                    let actualDir = { dr: 0, dc: 0 };
-                    if (subSegment.length > 1) {
-                        actualDir.dr = Math.sign(subSegment[1].r - subSegment[0].r);
-                        actualDir.dc = Math.sign(subSegment[1].c - subSegment[0].c);
-                    }
-
-                    const firstStone = subSegment[0];
-                    const lastStone = subSegment[3];
-
-                    // Check space before the first stone of the 4-line
-                    const r_before = firstStone.r - actualDir.dr;
-                    const c_before = firstStone.c - actualDir.dc;
-                    // Check space after the last stone of the 4-line
-                    const r_after = lastStone.r + actualDir.dr;
-                    const c_after = lastStone.c + actualDir.dc;
-
-                    if ((isInBounds(c_before, r_before) && board[r_before][c_before] === EMPTY) ||
-                        (isInBounds(c_after, r_after) && board[r_after][c_after] === EMPTY)) {
-                        canBecomeFive = true;
-                        break; // Found one extendable 4-line
-                    }
+                    const subSegment = stones.slice(i, i + 4); let actualDir = { dr: 0, dc: 0 };
+                    if (subSegment.length > 1) { actualDir.dr = Math.sign(subSegment[1].r - subSegment[0].r); actualDir.dc = Math.sign(subSegment[1].c - subSegment[0].c); }
+                    const firstStone = subSegment[0]; const lastStone = subSegment[3];
+                    const r_before = firstStone.r - actualDir.dr; const c_before = firstStone.c - actualDir.dc;
+                    const r_after = lastStone.r + actualDir.dr; const c_after = lastStone.c + actualDir.dc;
+                    if ((isInBounds(c_before, r_before) && board[r_before][c_before] === EMPTY) || (isInBounds(c_after, r_after) && board[r_after][c_after] === EMPTY)) { canBecomeFive = true; break; }
                 }
             }
-            if (canBecomeFive) break; // Break from directions loop
+            if (canBecomeFive) break;
         }
-        board[r][c] = EMPTY; // Final revert
-        return canBecomeFive;
+        board[r][c] = EMPTY; return canBecomeFive;
     }
-    return false; // Not even a four
+    return false;
 }
-
-
-/**
- * Counts open threes formed by placing a stone at (r,c) for player.
- * An open three is X-O-O-O-X where O is player and X is empty.
- * @returns {number} Count of distinct open threes formed.
- */
-function countOpenThreesFormed(board, r, c, player) {
-    board[r][c] = player; // Place stone
-    let openThreeCount = 0;
-    const directions = [{ dr: 0, dc: 1 }, { dr: 1, dc: 0 }, { dr: 1, dc: 1 }, { dr: 1, dc: -1 }];
-    const checkedLines = []; // To avoid double counting for a line (e.g. horizontal line counted once)
-
+function countOpenThreesFormedOmni(board, r, c, player) {
+    board[r][c] = player; let openThreeCount = 0;
+    const directions = [{ dr: 0, dc: 1 }, { dr: 1, dc: 0 }, { dr: 1, dc: 1 }, { dr: 1, dc: -1 }]; const checkedLines = [];
     for (const dir of directions) {
-        // Normalize direction to avoid duplicates (e.g. horizontal right and horizontal left)
-        const normDir = (dir.dc < 0 || (dir.dc === 0 && dir.dr < 0)) ? { dr: -dir.dr, dc: -dir.dc } : dir;
-        const dirKey = `${normDir.dr}_${normDir.dc}`;
-        if (checkedLines.includes(dirKey)) continue;
-
-        // Iterate through all possible 3-in-a-row patterns that include the new stone (r,c)
-        for (let i = 0; i < 3; i++) { // i is the offset of (r,c) within the potential 3-in-a-row
-            const sR = r - i * dir.dr; // Start row of the 3-group
-            const sC = c - i * dir.dc; // Start col of the 3-group
-
-            // Check if this forms a 3-in-a-row of 'player'
-            let isThreeInARow = true;
-            for (let k = 0; k < 3; k++) {
-                const curR = sR + k * dir.dr;
-                const curC = sC + k * dir.dc;
-                if (!isInBounds(curC, curR) || board[curR][curC] !== player) {
-                    isThreeInARow = false;
-                    break;
-                }
-            }
-
+        const normDir = (dir.dc < 0 || (dir.dc === 0 && dir.dr < 0)) ? { dr: -dir.dr, dc: -dir.dc } : dir; const dirKey = `${normDir.dr}_${normDir.dc}`; if (checkedLines.includes(dirKey)) continue;
+        for (let i = 0; i < 3; i++) {
+            const sR = r - i * dir.dr; const sC = c - i * dir.dc; let isThreeInARow = true;
+            for (let k = 0; k < 3; k++) { const curR = sR + k * dir.dr; const curC = sC + k * dir.dc; if (!isInBounds(curC, curR) || board[curR][curC] !== player) { isThreeInARow = false; break; } }
             if (isThreeInARow) {
-                // Check for open ends: _OOO_
-                const beforeR = sR - dir.dr;
-                const beforeC = sC - dir.dc;
-                const afterR = sR + 3 * dir.dr;
-                const afterC = sC + 3 * dir.dc;
-
-                if (isInBounds(beforeC, beforeR) && board[beforeR][beforeC] === EMPTY &&
-                    isInBounds(afterC, afterR) && board[afterR][afterC] === EMPTY) {
-                    openThreeCount++;
-                    checkedLines.push(dirKey); // Mark this line direction as counted
-                    break; // Found an open three in this direction, move to next direction
-                }
+                const beforeR = sR - dir.dr; const beforeC = sC - dir.dc; const afterR = sR + 3 * dir.dr; const afterC = sC + 3 * dir.dc;
+                if (isInBounds(beforeC, beforeR) && board[beforeR][beforeC] === EMPTY && isInBounds(afterC, afterR) && board[afterR][afterC] === EMPTY) { openThreeCount++; checkedLines.push(dirKey); break; }
             }
         }
     }
-    board[r][c] = EMPTY; // Revert
-    return openThreeCount;
+    board[r][c] = EMPTY; return openThreeCount;
 }
-
-/**
- * Checks for Double Three: placing a stone creates two open threes simultaneously.
- */
-function checkDoubleThree(board, r, c, player) {
-    return countOpenThreesFormed(board, r, c, player) >= 2;
-}
-
-/**
- * Counts fours (live or dead) formed by placing a stone at (r,c) for player.
- * @returns {number} Count of distinct fours formed.
- */
-function countFoursFormed(board, r, c, player) {
-    board[r][c] = player; // Place stone
-    let fourCount = 0;
-    const directions = [{ dr: 0, dc: 1 }, { dr: 1, dc: 0 }, { dr: 1, dc: 1 }, { dr: 1, dc: -1 }];
-    const checkedLines = [];
-
+function checkDoubleThreeOmni(board, r, c, player) { return countOpenThreesFormedOmni(board, r, c, player) >= 2; }
+function countFoursFormedOmni(board, r, c, player) {
+    board[r][c] = player; let fourCount = 0;
+    const directions = [{ dr: 0, dc: 1 }, { dr: 1, dc: 0 }, { dr: 1, dc: 1 }, { dr: 1, dc: -1 }]; const checkedLines = [];
     for (const dir of directions) {
-        const normDir = (dir.dc < 0 || (dir.dc === 0 && dir.dr < 0)) ? { dr: -dir.dr, dc: -dir.dc } : dir;
-        const dirKey = `${normDir.dr}_${normDir.dc}`;
-        if (checkedLines.includes(dirKey)) continue;
-
-        for (let i = 0; i < 4; i++) { // i is the offset of (r,c) within the potential 4-in-a-row
-            const sR = r - i * dir.dr;
-            const sC = c - i * dir.dc;
-
-            let isFourInARow = true;
-            for (let k = 0; k < 4; k++) {
-                const curR = sR + k * dir.dr;
-                const curC = sC + k * dir.dc;
-                if (!isInBounds(curC, curR) || board[curR][curC] !== player) {
-                    isFourInARow = false;
-                    break;
-                }
-            }
-
-            if (isFourInARow) {
-                // Found a 4-in-a-row. Now check if it's extendable to five.
-                // sR, sC is the start of this 4-in-a-row. dir is its direction.
-                const r_before = sR - dir.dr;
-                const c_before = sC - dir.dc;
-                const r_after = sR + 4 * dir.dr; // End of 4-in-a-row is (sR + 3*dir.dr), so after is (sR + 4*dir.dr)
-                const c_after = sC + 4 * dir.dc;
-
-                let extendable = false;
-                if (isInBounds(c_before, r_before) && board[r_before][c_before] === EMPTY) {
-                    extendable = true;
-                }
-                if (!extendable && isInBounds(c_after, r_after) && board[r_after][c_after] === EMPTY) {
-                    extendable = true;
-                }
-
-                if (extendable) {
-                    fourCount++;
-                    checkedLines.push(dirKey); // Mark this line direction as counted for an extendable four
-                }
-                break; // Found a 4-in-a-row (extendable or not) in this specific alignment starting sR,sC in this dir.
-                       // Move to next starting configuration (i) or next direction.
-            }
-        }
-    }
-    board[r][c] = EMPTY; // Revert
-    return fourCount; // Returns count of *extendable* fours
-}
-
-/**
- * Checks for Three-Four: placing a stone creates an open three AND a four simultaneously.
- */
-function checkThreeFour(board, r, c, player) {
-    // Place stone once for all checks for this spot
-    board[r][c] = player;
-    const openThrees = countOpenThreesFormed(board, r, c, player); // This function expects the stone to be NOT on board yet
-
-    // For counting fours, the stone should be on the board, so we already placed it.
-    // Re-implement a local four count that assumes stone is at (r,c)
-    let fourCount = 0;
-    const directions = [{ dr: 0, dc: 1 }, { dr: 1, dc: 0 }, { dr: 1, dc: 1 }, { dr: 1, dc: -1 }];
-    const checkedFourLines = [];
-    for (const dir of directions) {
-        const normDir = (dir.dc < 0 || (dir.dc === 0 && dir.dr < 0)) ? { dr: -dir.dr, dc: -dir.dc } : dir;
-        const dirKey = `${normDir.dr}_${normDir.dc}`;
-        if (checkedFourLines.includes(dirKey)) continue;
-
+        const normDir = (dir.dc < 0 || (dir.dc === 0 && dir.dr < 0)) ? { dr: -dir.dr, dc: -dir.dc } : dir; const dirKey = `${normDir.dr}_${normDir.dc}`; if (checkedLines.includes(dirKey)) continue;
         for (let i = 0; i < 4; i++) {
-            const sR = r - i * dir.dr;
-            const sC = c - i * dir.dc;
-            let isFourInARow = true;
-            for (let k = 0; k < 4; k++) {
-                const curR = sR + k * dir.dr;
-                const curC = sC + k * dir.dc;
-                if (!isInBounds(curC, curR) || board[curR][curC] !== player) {
-                    isFourInARow = false;
-                    break;
-                }
-            }
+            const sR = r - i * dir.dr; const sC = c - i * dir.dc; let isFourInARow = true;
+            for (let k = 0; k < 4; k++) { const curR = sR + k * dir.dr; const curC = sC + k * dir.dc; if (!isInBounds(curC, curR) || board[curR][curC] !== player) { isFourInARow = false; break; } }
             if (isFourInARow) {
-                fourCount++;
-                checkedFourLines.push(dirKey);
-                break;
+                const r_before = sR - dir.dr; const c_before = sC - dir.dc; const r_after = sR + 4 * dir.dr; const c_after = sC + 4 * dir.dc; let extendable = false;
+                if (isInBounds(c_before, r_before) && board[r_before][c_before] === EMPTY) extendable = true;
+                if (!extendable && isInBounds(c_after, r_after) && board[r_after][c_after] === EMPTY) extendable = true;
+                if (extendable) { fourCount++; checkedLines.push(dirKey); } break;
             }
         }
     }
-    board[r][c] = EMPTY; // Revert stone
-
-    // To be a 3-4, the specific stone at (r,c) must contribute to *both* an open three and a four.
-    // The countOpenThreesFormed and countFoursFormed are general.
-    // A more precise check might be needed if a single stone completes one pattern, and another existing stone completes the other.
-    // However, for highlighting (r,c), if placing stone there makes any open-three and any four, it's a 3-4 threat/opportunity.
-    // The logic in countOpenThreesFormed and the local fourCount already correctly attribute the formation to the stone at (r,c)
-    // because they check patterns *including* (r,c).
-
-    // Re-evaluate with the stone placed for the counts
-    // This is tricky: does (r,c) complete an open three AND a four that are distinct lines?
-    // Or does it extend one line to be an open three and another line to be a four?
-    // The current check is: placing (r,c) results in >=1 open three and >=1 four existing on the board that include (r,c).
+    board[r][c] = EMPTY; return fourCount;
+}
+function checkThreeFourOmni(board, r, c, player) {
+    board[r][c] = player; const openThrees = countOpenThreesFormedOmni(board, r, c, player); let fourCount = 0;
+    const directions = [{ dr: 0, dc: 1 }, { dr: 1, dc: 0 }, { dr: 1, dc: 1 }, { dr: 1, dc: -1 }]; const checkedFourLines = [];
+    for (const dir of directions) {
+        const normDir = (dir.dc < 0 || (dir.dc === 0 && dir.dr < 0)) ? { dr: -dir.dr, dc: -dir.dc } : dir; const dirKey = `${normDir.dr}_${normDir.dc}`; if (checkedFourLines.includes(dirKey)) continue;
+        for (let i = 0; i < 4; i++) {
+            const sR = r - i * dir.dr; const sC = c - i * dir.dc; let isFourInARow = true;
+            for (let k = 0; k < 4; k++) { const curR = sR + k * dir.dr; const curC = sC + k * dir.dc; if (!isInBounds(curC, curR) || board[curR][curC] !== player) { isFourInARow = false; break; } }
+            if (isFourInARow) { fourCount++; checkedFourLines.push(dirKey); break; }
+        }
+    }
+    board[r][c] = EMPTY;
     if (openThrees > 0 && fourCount > 0) {
-         // More refined check: ensure (r,c) is part of different lines for 3 and 4
-        board[r][c] = player;
-        let isGenuineThreeFour = false;
-
-        const threeDirections = []; // Directions of open threes formed through (r,c)
-        const fourDirections = [];  // Directions of fours formed through (r,c)
-
-        // Find directions for open threes
-        const d3 = [{ dr: 0, dc: 1 }, { dr: 1, dc: 0 }, { dr: 1, dc: 1 }, { dr: 1, dc: -1 }];
-        const chk3L = [];
+        board[r][c] = player; let isGenuineThreeFour = false; const threeDirections = []; const fourDirections = [];
+        const d3 = [{ dr: 0, dc: 1 }, { dr: 1, dc: 0 }, { dr: 1, dc: 1 }, { dr: 1, dc: -1 }]; const chk3L = [];
         for (const dir of d3) {
-            const nDir = (dir.dc < 0 || (dir.dc === 0 && dir.dr < 0)) ? { dr: -dir.dr, dc: -dir.dc } : dir;
-            const dKey = `${nDir.dr}_${nDir.dc}`;
-            if (chk3L.includes(dKey)) continue;
+            const nDir = (dir.dc < 0 || (dir.dc === 0 && dir.dr < 0)) ? { dr: -dir.dr, dc: -dir.dc } : dir; const dKey = `${nDir.dr}_${nDir.dc}`; if (chk3L.includes(dKey)) continue;
             for (let i = 0; i < 3; i++) {
-                const sR = r - i * dir.dr; const sC = c - i * dir.dc;
-                let is3 = true;
-                for (let k = 0; k < 3; k++) {
-                    const cR = sR + k * dir.dr; const cC = sC + k * dir.dc;
-                    if (!isInBounds(cC, cR) || board[cR][cC] !== player) { is3 = false; break; }
-                }
-                if (is3) {
-                    const bR = sR - dir.dr; const bC = sC - dir.dc;
-                    const aR = sR + 3 * dir.dr; const aC = sC + 3 * dir.dc;
-                    if (isInBounds(bC, bR) && board[bR][bC] === EMPTY && isInBounds(aC, aR) && board[aR][aC] === EMPTY) {
-                        threeDirections.push(nDir);
-                        chk3L.push(dKey);
-                        break;
-                    }
-                }
+                const sR = r - i * dir.dr; const sC = c - i * dir.dc; let is3 = true;
+                for (let k = 0; k < 3; k++) { const cR = sR + k * dir.dr; const cC = sC + k * dir.dc; if (!isInBounds(cC, cR) || board[cR][cC] !== player) { is3 = false; break; } }
+                if (is3) { const bR = sR - dir.dr; const bC = sC - dir.dc; const aR = sR + 3 * dir.dr; const aC = sC + 3 * dir.dc; if (isInBounds(bC, bR) && board[bR][bC] === EMPTY && isInBounds(aC, aR) && board[aR][aC] === EMPTY) { threeDirections.push(nDir); chk3L.push(dKey); break; } }
             }
         }
-
-        // Find directions for fours
-        const d4 = [{ dr: 0, dc: 1 }, { dr: 1, dc: 0 }, { dr: 1, dc: 1 }, { dr: 1, dc: -1 }];
-        const chk4L = [];
+        const d4 = [{ dr: 0, dc: 1 }, { dr: 1, dc: 0 }, { dr: 1, dc: 1 }, { dr: 1, dc: -1 }]; const chk4L = [];
         for (const dir of d4) {
-            const nDir = (dir.dc < 0 || (dir.dc === 0 && dir.dr < 0)) ? { dr: -dir.dr, dc: -dir.dc } : dir;
-            const dKey = `${nDir.dr}_${nDir.dc}`;
-            if (chk4L.includes(dKey)) continue;
+            const nDir = (dir.dc < 0 || (dir.dc === 0 && dir.dr < 0)) ? { dr: -dir.dr, dc: -dir.dc } : dir; const dKey = `${nDir.dr}_${nDir.dc}`; if (chk4L.includes(dKey)) continue;
             for (let i = 0; i < 4; i++) {
-                const sR = r - i * dir.dr; const sC = c - i * dir.dc;
-                let is4 = true;
-                for (let k = 0; k < 4; k++) {
-                    const cR = sR + k * dir.dr; const cC = sC + k * dir.dc;
-                    if (!isInBounds(cC, cR) || board[cR][cC] !== player) { is4 = false; break; }
-                }
+                const sR = r - i * dir.dr; const sC = c - i * dir.dc; let is4 = true;
+                for (let k = 0; k < 4; k++) { const cR = sR + k * dir.dr; const cC = sC + k * dir.dc; if (!isInBounds(cC, cR) || board[cR][cC] !== player) { is4 = false; break; } }
                 if (is4) {
-                    // Found a 4-in-a-row starting at sR, sC in direction dir (which is nDir when normalized).
-                    // Now check if it's extendable to five.
-                    const r_before_four = sR - dir.dr;
-                    const c_before_four = sC - dir.dc;
-                    const r_after_four = sR + 4 * dir.dr;
-                    const c_after_four = sC + 4 * dir.dc;
-
-                    let extendableFour = false;
-                    if (isInBounds(c_before_four, r_before_four) && board[r_before_four][c_before_four] === EMPTY) {
-                        extendableFour = true;
-                    }
-                    if (!extendableFour && isInBounds(c_after_four, r_after_four) && board[r_after_four][c_after_four] === EMPTY) {
-                        extendableFour = true;
-                    }
-
-                    if (extendableFour) {
-                        fourDirections.push(nDir);
-                        chk4L.push(dKey);
-                    }
-                    break; // Break from 'i' loop (offsets), found a 4-line (extendable or not) in this dir
+                    const r_before_four = sR - dir.dr; const c_before_four = sC - dir.dc; const r_after_four = sR + 4 * dir.dr; const c_after_four = sC + 4 * dir.dc; let extendableFour = false;
+                    if (isInBounds(c_before_four, r_before_four) && board[r_before_four][c_before_four] === EMPTY) extendableFour = true;
+                    if (!extendableFour && isInBounds(c_after_four, r_after_four) && board[r_after_four][c_after_four] === EMPTY) extendableFour = true;
+                    if (extendableFour) { fourDirections.push(nDir); chk4L.push(dKey); } break;
                 }
             }
         }
-        board[r][c] = EMPTY; // Revert
-
-        // Check if there's at least one three-direction and one four-direction that are different
-        for (const tDir of threeDirections) {
-            for (const fDir of fourDirections) {
-                if (tDir.dr !== fDir.dr || tDir.dc !== fDir.dc) { // If directions are different
-                    isGenuineThreeFour = true;
-                    break;
-                }
-            }
-            if (isGenuineThreeFour) break;
-        }
+        board[r][c] = EMPTY;
+        for (const tDir of threeDirections) { for (const fDir of fourDirections) { if (tDir.dr !== fDir.dr || tDir.dc !== fDir.dc) { isGenuineThreeFour = true; break; } } if (isGenuineThreeFour) break; }
         return isGenuineThreeFour;
     }
     return false;
 }
-
-
-/**
- * Checks for Double Four: placing a stone creates two fours simultaneously.
- */
-function checkDoubleFour(board, r, c, player) {
-    // This is simpler: if placing the stone results in 2 or more fours.
-    // The countFoursFormed function already correctly counts distinct lines of four formed by (r,c).
-    return countFoursFormed(board, r, c, player) >= 2;
-}
-
-
-/**
- * Gets detailed pattern hints for a given player.
- * Iterates over empty cells, simulates placing a stone, and checks for patterns.
- */
+function checkDoubleFourOmni(board, r, c, player) { return countFoursFormedOmni(board, r, c, player) >= 2; }
 function getDetailedPatternHints(board, player) {
-    const hints = [];
-    const opponent = (player === PLAYER_BLACK) ? PLAYER_WHITE : PLAYER_BLACK;
+    const hints = []; const opponent = (player === PLAYER_BLACK) ? PLAYER_WHITE : PLAYER_BLACK;
     const hintCategory = (player === self.playerForOmniInternal) ? HINT_TYPE_PLAYER_OPPORTUNITY : HINT_TYPE_OPPONENT_THREAT;
-
     for (let r = 0; r < BOARD_SIZE; r++) {
         for (let c = 0; c < BOARD_SIZE; c++) {
             if (board[r][c] === EMPTY) {
-                // Highest priority: Winning move
-                if (checkFive(board, r, c, player)) {
-                    hints.push({ x: c, y: r, patternType: PATTERN_TYPE_FIVE_IN_A_ROW, hintCategory });
-                    continue; // If it's a win, no need to check other patterns for this spot for this player
-                }
-
-                // Check for opponent's immediate win if player *doesn't* move here.
-                // This is a defensive check. If opponent can win at (r,c), then (r,c) is critical for player.
-                // This is slightly different from standard "opponent threat" which is about opponent's *next* move.
-                // For this version, we focus on what the current player's move at (r,c) achieves or blocks.
-                // The "opponent_threat" category will be for opponent's potential moves.
-
-                // Check for Double Four
-                if (checkDoubleFour(board, r, c, player)) {
-                    hints.push({ x: c, y: r, patternType: PATTERN_TYPE_DOUBLE_FOUR, hintCategory });
-                }
-                // Check for Three-Four (ensure it's not also a double four already counted)
-                // A double four might also be a three-four, but double-four is stronger.
-                // To avoid redundant highlights, we can prioritize.
-                // For now, let them stack if logic permits, UI can decide or we refine here.
-                else if (checkThreeFour(board, r, c, player)) { // Use 'else if' to avoid double counting with DF
-                    hints.push({ x: c, y: r, patternType: PATTERN_TYPE_THREE_FOUR, hintCategory });
-                }
-
-                // Check for Line of Four (that isn't part of a DF or TF already pushed for this spot)
-                // A simple line of four is less than DF or TF.
-                // To avoid multiple markers on the same spot from the same player, we can use flags or check existing hints.
+                if (checkFiveOmni(board, r, c, player)) { hints.push({ x: c, y: r, patternType: PATTERN_TYPE_FIVE_IN_A_ROW, hintCategory }); continue; }
+                if (checkDoubleFourOmni(board, r, c, player)) { hints.push({ x: c, y: r, patternType: PATTERN_TYPE_DOUBLE_FOUR, hintCategory }); }
+                else if (checkThreeFourOmni(board, r, c, player)) { hints.push({ x: c, y: r, patternType: PATTERN_TYPE_THREE_FOUR, hintCategory }); }
                 let alreadyProcessedForStrongerPattern = hints.some(h => h.x === c && h.y === r && h.hintCategory === hintCategory);
-                if (!alreadyProcessedForStrongerPattern && checkLineOfFour(board, r, c, player)) {
-                     hints.push({ x: c, y: r, patternType: PATTERN_TYPE_LINE_OF_FOUR, hintCategory });
-                }
-
-                // Check for Double Three
-                // Reset flag for this check
+                if (!alreadyProcessedForStrongerPattern && checkLineOfFourOmni(board, r, c, player)) { hints.push({ x: c, y: r, patternType: PATTERN_TYPE_LINE_OF_FOUR, hintCategory }); }
                 alreadyProcessedForStrongerPattern = hints.some(h => h.x === c && h.y === r && h.hintCategory === hintCategory);
-                if (!alreadyProcessedForStrongerPattern && checkDoubleThree(board, r, c, player)) {
-                    hints.push({ x: c, y: r, patternType: PATTERN_TYPE_DOUBLE_THREE, hintCategory });
-                }
+                if (!alreadyProcessedForStrongerPattern && checkDoubleThreeOmni(board, r, c, player)) { hints.push({ x: c, y: r, patternType: PATTERN_TYPE_DOUBLE_THREE, hintCategory }); }
             }
         }
     }
     return hints;
 }
-
-// Store playerForOmni when evaluateAllPoints is called
-// This is a bit of a hack due to the self.onmessage structure, ideally it's passed around.
 self.playerForOmniInternal = null;
 
 
 // Worker message handler
 self.onmessage = function(e) {
     console.log('ai.worker.js: Message received from main script:', e.data);
-    const { type, board, searchDepth, aiPlayer, playerForOmni } = e.data; // Added type and playerForOmni
+    const { type, board, difficultyProfile, aiPlayer, playerForOmni: playerForOmniFromData } = e.data;
 
-    if (type === 'findBestMove') { // Existing functionality
-        if (!board || typeof searchDepth === 'undefined') {
-            console.error('ai.worker.js: Invalid data received for findBestMove.');
-            self.postMessage({ type: 'error', error: 'Invalid data received by worker for findBestMove' });
+    if (type === 'findBestMove') {
+        if (!board || !difficultyProfile) {
+            console.error('ai.worker.js: Invalid data received for findBestMove. Board or difficultyProfile missing.');
+            self.postMessage({ type: 'error', error: 'Invalid data for findBestMove: board or difficultyProfile missing' });
             return;
         }
-        // Ensure aiPlayer is valid, default to PLAYER_WHITE if not provided or invalid
         const effectiveAiPlayer = (aiPlayer === PLAYER_BLACK || aiPlayer === PLAYER_WHITE) ? aiPlayer : PLAYER_WHITE;
 
-        const bestMoveResult = findBestMove(board, searchDepth, -Infinity, Infinity, true, effectiveAiPlayer);
-        console.log('ai.worker.js: Calculation complete for findBestMove. Posting message back to main script:', bestMoveResult.move);
-        self.postMessage({ type: 'bestMoveFound', move: bestMoveResult.move, score: bestMoveResult.score });
+        initGlobalBitboardsFrom2DArray(board);
+        const initialBoardHash = computeZobristHashFromBitboards();
 
-    } else if (type === 'evaluateAllPoints') { // New functionality for Omniscience
-        if (!board || !playerForOmni) {
+        if (difficultyProfile.useOpeningBook && openingBook.has(initialBoardHash.toString())) {
+            const bookMoves = openingBook.get(initialBoardHash.toString());
+            if (bookMoves && bookMoves.length > 0) {
+                const selectedBookMove = bookMoves[Math.floor(Math.random() * bookMoves.length)];
+                console.log("AI Worker: Using opening book move:", selectedBookMove);
+                self.postMessage({ type: 'bestMoveFound', move: selectedBookMove, score: PATTERN_SCORES[PT_FIVE].offensive / 2 });
+                return;
+            }
+        }
+
+        transpositionTable.clear();
+        console.log(`Transposition table cleared. Size: ${transpositionTable.size}. AI Profile: ${JSON.stringify(difficultyProfile)}`);
+
+        const startTime = performance.now();
+        const bestMoveResult = findBestMove(
+            difficultyProfile.searchDepth,
+            difficultyProfile.heuristicLevel,
+            -Infinity, Infinity, true, effectiveAiPlayer, initialBoardHash
+        );
+        const endTime = performance.now();
+        console.log(`AI Worker: findBestMove took ${(endTime - startTime).toFixed(2)} ms. TT size: ${transpositionTable.size}, Depth: ${difficultyProfile.searchDepth}, Heuristic: ${difficultyProfile.heuristicLevel}`);
+
+        let finalMove = bestMoveResult.move;
+        if (difficultyProfile.randomness > 0 && Math.random() < difficultyProfile.randomness && bestMoveResult.move) {
+            console.log(`AI Worker: Applying randomness (chance: ${difficultyProfile.randomness}, topN: ${difficultyProfile.randomTopN})`);
+            let possibleMoves = getPossibleMoves();
+            if (possibleMoves.length > 1) {
+                let scoredMoves = possibleMoves.map(m => {
+                    let score;
+                    if(getCellStatus(m.y, m.x) === EMPTY) {
+                        setCellBit(bitboards[effectiveAiPlayer], m.y, m.x);
+                        score = evaluateBoard(effectiveAiPlayer, difficultyProfile.heuristicLevel);
+                        clearCellBit(bitboards[effectiveAiPlayer], m.y, m.x);
+                    } else {
+                        score = -Infinity;
+                    }
+                    return { move: m, score: score };
+                });
+                scoredMoves.sort((a, b) => b.score - a.score);
+                const topNToConsider = Math.min(scoredMoves.length, difficultyProfile.randomTopN);
+                const topNMoves = scoredMoves.slice(0, topNToConsider);
+                if (topNMoves.length > 0) {
+                    const randomIndex = Math.floor(Math.random() * topNMoves.length);
+                    finalMove = topNMoves[randomIndex].move;
+                    console.log(`AI Worker: Randomly selected move (${finalMove.x},${finalMove.y}) from top ${topNMoves.length} options (Original best: ${bestMoveResult.move.x},${bestMoveResult.move.y}).`);
+                } else {
+                    console.log(`AI Worker: Randomness triggered, but no alternative moves found after shallow eval. Sticking to minimax best.`);
+                }
+            } else if (possibleMoves.length === 1 && bestMoveResult.move && (possibleMoves[0].x !== bestMoveResult.move.x || possibleMoves[0].y !== bestMoveResult.move.y)) {
+                 console.warn(`AI Worker: Randomness context - Minimax best move differs from the only possible move. Opting for the single possible move.`);
+                finalMove = possibleMoves[0];
+            }
+             else {
+                console.log(`AI Worker: Randomness triggered, but only one possible move or no initial best move. Sticking to it.`);
+            }
+        }
+        console.log('ai.worker.js: Calculation complete. Posting final move to main script:', finalMove);
+        self.postMessage({ type: 'bestMoveFound', move: finalMove, score: bestMoveResult.score });
+    } else if (type === 'evaluateAllPoints') {
+        const { board: omniBoard, playerForOmni: omniPlayer } = e.data;
+        if (!omniBoard || !omniPlayer) {
             console.error('ai.worker.js: Invalid data received for evaluateAllPoints. Board or playerForOmni missing.');
             self.postMessage({ type: 'error', error: 'Invalid data received by worker for evaluateAllPoints' });
             return;
         }
-
-        const hints = [];
-        // Make a copy of the board to ensure the original is not modified by scoreMoveHeuristically
-        const boardCopy = board.map(row => [...row]);
-
-        for (let y = 0; y < BOARD_SIZE; y++) {
-            for (let x = 0; x < BOARD_SIZE; x++) {
-                if (boardCopy[y][x] === EMPTY) {
-                    // Pass the copy of the board to scoreMoveHeuristically
-                    const score = scoreMoveHeuristically(boardCopy, x, y, playerForOmni);
-                    // Only send back hints that have a positive score, indicating a potentially good move.
-                    // A score of 0 might mean neutral or no specific advantage found by the heuristic.
-                    if (score > 0) {
-                        hints.push({ x, y, score });
-                    }
-                }
-            }
-        }
-        // Store the player for whom omniscience is being calculated.
-        self.playerForOmniInternal = playerForOmni;
-        const opponent = (playerForOmni === PLAYER_BLACK) ? PLAYER_WHITE : PLAYER_BLACK;
-
-        // Get hints for the player's opportunities
-        const playerOpportunities = getDetailedPatternHints(boardCopy, playerForOmni);
-
-        // Get hints for the opponent's threats
-        const opponentThreats = getDetailedPatternHints(boardCopy, opponent);
-
-        // Combine hints. Prioritize more severe threats/opportunities if spots overlap.
-        // For now, a simple concatenation. UI might need to handle overlaps if one spot is both.
-        // Or, we can refine here. For example, if (x,y) is a win for player AND a win for opponent (unlikely but possible if board is nearly full), what to show?
-        // Current getDetailedPatternHints prioritizes WIN for a player, so an opponent WIN threat might not be generated if player can WIN at the same spot.
-        // This implies the player's WIN takes precedence in consideration.
+        // Omniscience uses 2D array logic
+        self.playerForOmniInternal = omniPlayer;
+        const opponent = (omniPlayer === PLAYER_BLACK) ? PLAYER_WHITE : PLAYER_BLACK;
+        // Note: getDetailedPatternHints and its sub-functions (checkFiveOmni, etc.) still use the passed `omniBoard` (2D array).
+        const playerOpportunities = getDetailedPatternHints(omniBoard, omniPlayer);
+        const opponentThreats = getDetailedPatternHints(omniBoard, opponent);
 
         let combinedHints = [];
-
-        // Add player opportunities, ensuring no duplicate coordinates from this category
         const playerOpportunityCoords = new Set();
         playerOpportunities.forEach(hint => {
             const coordKey = `${hint.x},${hint.y}`;
-            if (!playerOpportunityCoords.has(coordKey)) {
-                combinedHints.push(hint);
-                playerOpportunityCoords.add(coordKey);
-            }
+            if (!playerOpportunityCoords.has(coordKey)) { combinedHints.push(hint); playerOpportunityCoords.add(coordKey); }
         });
-
-        // Add opponent threats, potentially filtering if a player opportunity is a win at the same spot.
-        // If player can win at (x,y), that's the most important hint for that spot.
         opponentThreats.forEach(threat => {
-            const isPlayerWinAtSameSpot = playerOpportunities.find(
-                op => op.x === threat.x && op.y === threat.y && op.patternType === PATTERN_TYPE_FIVE_IN_A_ROW
-            );
+            const isPlayerWinAtSameSpot = playerOpportunities.find(op => op.x === threat.x && op.y === threat.y && op.patternType === PATTERN_TYPE_FIVE_IN_A_ROW);
             if (!isPlayerWinAtSameSpot) {
-                 // Avoid adding if the same spot is already a player opportunity (unless threat is a win and player op is not)
                 const isPlayerOpportunityAtSameSpot = playerOpportunities.find(op => op.x === threat.x && op.y === threat.y);
                 if (threat.patternType === PATTERN_TYPE_FIVE_IN_A_ROW || !isPlayerOpportunityAtSameSpot) {
-                    // Add if threat is a win, or if no player opportunity exists there,
-                    // or if we decide to allow both if they are different types (e.g. player forms 3, opp forms 4)
-                    // For now, simple add if not a direct conflict with player win.
-                    // We might need more sophisticated merging if a spot is, e.g., a player L4 and an opponent L4.
-                    // The current getDetailedPatternHints structure should prevent multiple hints for the *same player* at one spot.
-                    // But it allows one hint for player, one for opponent at the same spot.
-
-                    // Check if this exact threat (coord + type) is already there (e.g. from player making a defensive five)
-                    // This check is mostly redundant if categories are distinct, but good for safety.
                     const alreadyExists = combinedHints.some(h => h.x === threat.x && h.y === threat.y && h.hintCategory === threat.hintCategory && h.patternType === threat.patternType);
-                    if(!alreadyExists) {
-                        // If a player opportunity exists at the same spot, but it's NOT a win,
-                        // and the opponent threat IS a win, the opponent threat should take precedence or be shown.
-                        // For now, let's add opponent threats unless the player has a winning move there.
-                        // The UI will ultimately decide how to display overlapping hints if any.
-                         combinedHints.push(threat);
-                    }
+                    if(!alreadyExists) { combinedHints.push(threat); }
                 }
             }
         });
-
-        // Remove score as it's not used by the new system; patternType is key.
         const finalHints = combinedHints.map(({ x, y, patternType, hintCategory }) => ({ x, y, patternType, hintCategory }));
-
-        console.log(`ai.worker.js: Evaluated points for omniscience. Player OPs: ${playerOpportunities.length}, Opponent Threats: ${opponentThreats.length}. Total unique hints sent: ${finalHints.length}`);
+        console.log(`ai.worker.js: Evaluated points for omniscience (using 2D array logic). Player OPs: ${playerOpportunities.length}, Opponent Threats: ${opponentThreats.length}. Total unique hints sent: ${finalHints.length}`);
         self.postMessage({ type: 'omniEvaluationComplete', hints: finalHints });
-        self.playerForOmniInternal = null; // Reset after use
-
+        self.playerForOmniInternal = null;
     } else {
         console.error('ai.worker.js: Unknown message type received:', type);
         self.postMessage({ type: 'error', error: `Unknown message type: ${type}` });
     }
 };
-
 console.log("ai.worker.js loaded and ready for messages.");
