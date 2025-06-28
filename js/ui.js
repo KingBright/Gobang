@@ -411,9 +411,10 @@ function calculateAndDrawOmniHintsInternal(board) {
         return;
     }
 
-    const playerForOmniscience = window.gameApi.getCurrentPlayer();
+    // Omniscience hints are always from the perspective of the human player (PLAYER_BLACK)
+    const playerForOmniscience = PLAYER_BLACK;
 
-    console.log("UI: Requesting Omniscience hints from AI for player:", playerForOmniscience);
+    console.log("UI: Requesting Omniscience hints from AI (perspective: PLAYER_BLACK).");
     omniHints = []; // Clear old hints immediately, a loading state could be set here
     // messageEl.textContent = "全知模式：计算提示中..."; // Example loading message
 
@@ -510,11 +511,12 @@ window.uiApi = {
         if (isOmniscienceModeActive) {
             const board = window.gameApi.getBoard();
             const gameState = window.gameApi.getGameState();
-            const currentPlayer = window.gameApi.getCurrentPlayer();
-            // Only calculate hints if game is playing and it's human's turn (PLAYER_BLACK)
-            if (gameState === GAME_STATE_PLAYING && currentPlayer === PLAYER_BLACK) {
+        // Hints should update if mode is active and game is playing, regardless of whose turn it is.
+        // The perspective for hints is always for the human player (PLAYER_BLACK).
+        if (gameState === GAME_STATE_PLAYING) {
                 console.log("UI: Externally triggered omniscience update.");
-                calculateAndDrawOmniHintsInternal(board); // This is async
+            // Pass the board, calculateAndDrawOmniHintsInternal will handle using PLAYER_BLACK perspective
+            calculateAndDrawOmniHintsInternal(board);
             }
         }
     }

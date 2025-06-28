@@ -167,8 +167,8 @@ window.handleHumanMove = function(x, y) {
     if (moveSuccessful) {
         uiApi.drawGame(); 
 
-        // NEW: Trigger omniscience update if active, after player's move is drawn
-        if (uiApi.triggerOmniscienceUpdateIfActive) { // Check if function exists
+        // Trigger omniscience update if active, after player's move is drawn
+        if (uiApi.triggerOmniscienceUpdateIfActive) {
             uiApi.triggerOmniscienceUpdateIfActive();
         }
 
@@ -277,7 +277,13 @@ function proceedToAiTurn() {
                     const aiMoveSuccessful = gameApi.makeMove(aiMove.x, aiMove.y);
 
                     if (aiMoveSuccessful) {
-                        uiApi.drawGame();
+                        uiApi.drawGame(); // Draw AI's move
+
+                        // Trigger omniscience update if active, after AI's move is drawn
+                        if (uiApi.triggerOmniscienceUpdateIfActive) {
+                            uiApi.triggerOmniscienceUpdateIfActive();
+                        }
+
                         if (gameApi.getGameState() === GAME_STATE_ENDED) {
                             console.log("Main.js: Game ended after AI move.");
                             let endMessage = "游戏结束!";
@@ -291,7 +297,13 @@ function proceedToAiTurn() {
                             if (uiApi.showGameMessageModal) uiApi.showGameMessageModal(endMessage);
                         } else {
                             gameApi.setCurrentPlayer(PLAYER_BLACK);
-                            uiApi.drawGame();
+                            // uiApi.drawGame(); // Drawing is already done, and message update is part of it.
+                                               // If setCurrentPlayer or game message needs specific update, it's handled by drawGame.
+                                               // No need for an immediate second drawGame unless state change for message is critical before next player input.
+                                               // The existing uiApi.drawGame() after setCurrentPlayer will update the message for "Black's turn".
+                                               // The hint update above will also trigger a drawGame.
+                                               // To avoid multiple rapid drawGame calls, let's ensure the final drawGame in this block is sufficient.
+                            uiApi.drawGame(); // This will refresh the game message to "Black's turn"
                         }
                     } else {
                         console.error("Main.js Error: AI made an invalid move:", aiMove);
