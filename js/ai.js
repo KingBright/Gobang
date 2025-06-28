@@ -3,35 +3,35 @@
 const AI_DIFFICULTY_PROFILES = {
     1: { // Novice
         name: "Novice",
-        searchDepth: 1, // Further Reduced
+        searchDepth: 2, // Increased from 1. ai.md recommends 2-3
         heuristicLevel: 'novice',
         randomness: 0.5,
         randomTopN: 4
     },
     2: { // Apprentice
         name: "Apprentice",
-        searchDepth: 2,
+        searchDepth: 2, // Kept at 2. ai.md recommends 3-4. Relying on heuristic changes from Step 4.
         heuristicLevel: 'apprentice',
         randomness: 0.25,
         randomTopN: 3
     },
     3: { // Adept
         name: "Adept",
-        searchDepth: 2,
+        searchDepth: 3, // Increased from 2. ai.md recommends 4-5
         heuristicLevel: 'adept',
         randomness: 0.1,
         randomTopN: 2
     },
     4: { // Expert
         name: "Expert",
-        searchDepth: 3,
+        searchDepth: 3, // Kept at 3. ai.md recommends 5-6. Performance concern for depth 4.
         heuristicLevel: 'expert',
         randomness: 0,
         randomTopN: 1
     },
     5: { // Master
         name: "Master",
-        searchDepth: 3,
+        searchDepth: 4, // Increased from 3. ai.md recommends 6-8 (time limited)
         heuristicLevel: 'master',
         randomness: 0,
         randomTopN: 1,

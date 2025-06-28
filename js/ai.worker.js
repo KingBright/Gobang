@@ -49,11 +49,44 @@ const NUM_BITBOARDS_PER_PLAYER = 4;
 const BITS_PER_BIGINT = BigInt(64);
 let bitboards = {};
 
+// Masks for board edges
+const LEFT_EDGE_MASK_ARRAY = Array(NUM_BITBOARDS_PER_PLAYER).fill(BigInt(0));
+const RIGHT_EDGE_MASK_ARRAY = Array(NUM_BITBOARDS_PER_PLAYER).fill(BigInt(0));
+const ALL_ONES_64 = BigInt("0xffffffffffffffff"); // All 64 bits set for masking
+
+function initializeHelperBitmasks() {
+    // Ensure these are reset if called multiple times, though it should be once.
+    LEFT_EDGE_MASK_ARRAY.fill(BigInt(0));
+    RIGHT_EDGE_MASK_ARRAY.fill(BigInt(0));
+
+    for (let r = 0; r < BOARD_SIZE; r++) {
+        // Left edge (column 0)
+        let bitPosLeft = r * BOARD_SIZE + 0;
+        let boardIndexLeft = Math.floor(bitPosLeft / 64);
+        let bitInBoardLeft = BigInt(bitPosLeft % 64);
+        if (boardIndexLeft < NUM_BITBOARDS_PER_PLAYER) {
+            LEFT_EDGE_MASK_ARRAY[boardIndexLeft] |= (BigInt(1) << bitInBoardLeft);
+        }
+
+        // Right edge (column BOARD_SIZE - 1)
+        let bitPosRight = r * BOARD_SIZE + (BOARD_SIZE - 1);
+        let boardIndexRight = Math.floor(bitPosRight / 64);
+        let bitInBoardRight = BigInt(bitPosRight % 64);
+        if (boardIndexRight < NUM_BITBOARDS_PER_PLAYER) {
+            RIGHT_EDGE_MASK_ARRAY[boardIndexRight] |= (BigInt(1) << bitInBoardRight);
+        }
+    }
+    console.log("Edge masks initialized for bitboards.");
+}
+// Call initialization for masks and global bitboards
+initializeHelperBitmasks();
+
 function initializeGlobalBitboards() {
     bitboards[PLAYER_BLACK] = Array(NUM_BITBOARDS_PER_PLAYER).fill(BigInt(0));
     bitboards[PLAYER_WHITE] = Array(NUM_BITBOARDS_PER_PLAYER).fill(BigInt(0));
 }
 initializeGlobalBitboards();
+
 
 function getCellBitPosition(r, c) {
     return r * BOARD_SIZE + c;
@@ -717,16 +750,27 @@ function calculateScoreForPlayerOffensive(player, heuristicLevel) {
     const emptyBB = computeEmptyCellsBitboard();
 
     // Bitwise Fours
-    let score_lf4 = PATTERN_SCORES[PT_LIVE_FOUR].offensive;
-    if (heuristicLevel === 'novice' || heuristicLevel === 'apprentice') score_lf4 = 0;
+    let score_lf4 = PATTERN_SCORES[PT_LIVE_FOUR].offensive; // Base 10,000,000
+    if (heuristicLevel === 'novice') {
+        score_lf4 *= 0.001; // e.g., 10,000
+    } else if (heuristicLevel === 'apprentice') {
+        score_lf4 *= 0.01;  // e.g., 100,000
+    }
+    // Adept, Expert, Master use full score_lf4
     if (score_lf4 > 0) {
         totalScore += PopCountBoardArray(detectHorizontalLiveFourBitwise(playerBB, emptyBB)) * score_lf4;
         totalScore += PopCountBoardArray(detectVerticalLiveFourBitwise(playerBB, emptyBB)) * score_lf4;
         totalScore += PopCountBoardArray(detectDiagonalDownRightLiveFourBitwise(playerBB, emptyBB)) * score_lf4;
         totalScore += PopCountBoardArray(detectDiagonalDownLeftLiveFourBitwise(playerBB, emptyBB)) * score_lf4;
     }
-    let score_df4 = PATTERN_SCORES[PT_DEAD_FOUR].offensive;
-    if (heuristicLevel === 'novice' || heuristicLevel === 'apprentice') score_df4 = 0;
+
+    let score_df4 = PATTERN_SCORES[PT_DEAD_FOUR].offensive; // Base 50,000
+    if (heuristicLevel === 'novice') {
+        score_df4 *= 0.01; // e.g., 500
+    } else if (heuristicLevel === 'apprentice') {
+        score_df4 *= 0.1;  // e.g., 5,000
+    }
+    // Adept, Expert, Master use full score_df4
     if (score_df4 > 0) {
         totalScore += PopCountBoardArray(detectHorizontalDeadFourBitwise(playerBB, opponentBB, emptyBB)) * score_df4;
         totalScore += PopCountBoardArray(detectVerticalDeadFourBitwise(playerBB, opponentBB, emptyBB)) * score_df4;
@@ -735,18 +779,21 @@ function calculateScoreForPlayerOffensive(player, heuristicLevel) {
     }
 
     // Bitwise Threes
-    let score_lt3 = PATTERN_SCORES[PT_LIVE_THREE].offensive;
-    if (heuristicLevel === 'novice') score_lt3 *= 0.05;
-    else if (heuristicLevel === 'apprentice') score_lt3 *= 0.2;
+    let score_lt3 = PATTERN_SCORES[PT_LIVE_THREE].offensive; // Base 1,000
+    if (heuristicLevel === 'novice') score_lt3 *= 0.1; // Was 0.05 (50), now 100
+    else if (heuristicLevel === 'apprentice') score_lt3 *= 0.25; // Was 0.2 (200), now 250
+    // Adept, Expert, Master use full score
     if (score_lt3 > 0) { // Check if positive after potential reduction
         totalScore += PopCountBoardArray(detectHorizontalLiveThreeBitwise(playerBB, emptyBB)) * score_lt3;
         totalScore += PopCountBoardArray(detectVerticalLiveThreeBitwise(playerBB, emptyBB)) * score_lt3;
         totalScore += PopCountBoardArray(detectDiagonalDownRightLiveThreeBitwise(playerBB, emptyBB)) * score_lt3;
         totalScore += PopCountBoardArray(detectDiagonalDownLeftLiveThreeBitwise(playerBB, emptyBB)) * score_lt3;
     }
-    let score_dt3 = PATTERN_SCORES[PT_DEAD_THREE].offensive;
-    if (heuristicLevel === 'novice') score_dt3 *= 0.05;
-    else if (heuristicLevel === 'apprentice') score_dt3 *= 0.2;
+
+    let score_dt3 = PATTERN_SCORES[PT_DEAD_THREE].offensive; // Base 100
+    if (heuristicLevel === 'novice') score_dt3 *= 0.1; // Was 0.05 (5), now 10
+    else if (heuristicLevel === 'apprentice') score_dt3 *= 0.25; // Was 0.2 (20), now 25
+    // Adept, Expert, Master use full score
     if (score_dt3 > 0) {
         totalScore += PopCountBoardArray(detectHorizontalDeadThreeBitwise(playerBB, opponentBB, emptyBB)) * score_dt3;
         totalScore += PopCountBoardArray(detectVerticalDeadThreeBitwise(playerBB, opponentBB, emptyBB)) * score_dt3;
@@ -756,6 +803,7 @@ function calculateScoreForPlayerOffensive(player, heuristicLevel) {
 
     // Bitwise Twos
     let score_lt2 = PATTERN_SCORES[PT_LIVE_TWO].offensive;
+    // No change for twos based on heuristic level in this proposal, but could be added if needed.
     if (score_lt2 > 0) {
         totalScore += PopCountBoardArray(detectHorizontalLiveTwoBitwise(playerBB, emptyBB)) * score_lt2;
         totalScore += PopCountBoardArray(detectVerticalLiveTwoBitwise(playerBB, emptyBB)) * score_lt2;
@@ -771,19 +819,22 @@ function calculateScoreForPlayerOffensive(player, heuristicLevel) {
     }
 
     // Bitwise Gapped Patterns
-    let score_ljt3 = PATTERN_SCORES[PT_LIVE_JUMP_THREE].offensive;
-    if (heuristicLevel === 'novice') score_ljt3 = 0;
-    else if (heuristicLevel === 'apprentice') score_ljt3 *= 0.2; // Apprentice might see jump threes with reduced value
+    let score_ljt3 = PATTERN_SCORES[PT_LIVE_JUMP_THREE].offensive; // Base 300
+    if (heuristicLevel === 'novice') score_ljt3 *= 0.05; // Was 0, now ~15
+    else if (heuristicLevel === 'apprentice') score_ljt3 *= 0.2; // Stays 60
+    // Adept, Expert, Master use full score
     if (score_ljt3 > 0) {
         totalScore += PopCountBoardArray(detectHorizontalLiveJumpThreeBitwise(playerBB, emptyBB)) * score_ljt3;
         totalScore += PopCountBoardArray(detectVerticalLiveJumpThreeBitwise(playerBB, emptyBB)) * score_ljt3;
         totalScore += PopCountBoardArray(detectDiagonalDownRightLiveJumpThreeBitwise(playerBB, emptyBB)) * score_ljt3;
         totalScore += PopCountBoardArray(detectDiagonalDownLeftLiveJumpThreeBitwise(playerBB, emptyBB)) * score_ljt3;
     }
-    let score_djt3 = PATTERN_SCORES[PT_DEAD_JUMP_THREE].offensive;
-    if (heuristicLevel === 'novice') score_djt3 = 0;
-    else if (heuristicLevel === 'apprentice') score_djt3 *= 0.2;
-     if (score_djt3 > 0) {
+
+    let score_djt3 = PATTERN_SCORES[PT_DEAD_JUMP_THREE].offensive; // Base 70
+    if (heuristicLevel === 'novice') score_djt3 *= 0.05; // Was 0, now ~3
+    else if (heuristicLevel === 'apprentice') score_djt3 *= 0.2; // Stays 14
+    // Adept, Expert, Master use full score
+    if (score_djt3 > 0) {
         totalScore += PopCountBoardArray(detectHorizontalDeadJumpThreeBitwise(playerBB, opponentBB, emptyBB)) * score_djt3;
         totalScore += PopCountBoardArray(detectVerticalDeadJumpThreeBitwise(playerBB, opponentBB, emptyBB)) * score_djt3;
         totalScore += PopCountBoardArray(detectDiagonalDownRightDeadJumpThreeBitwise(playerBB, opponentBB, emptyBB)) * score_djt3;
@@ -791,8 +842,15 @@ function calculateScoreForPlayerOffensive(player, heuristicLevel) {
     }
 
     // Dynamic Double Three check
-    let doubleThreeScoreToAdd = PATTERN_SCORES[PT_DOUBLE_THREE].offensive;
-    if (heuristicLevel === 'novice' || heuristicLevel === 'apprentice') doubleThreeScoreToAdd = 0;
+    let doubleThreeScoreToAdd = PATTERN_SCORES[PT_DOUBLE_THREE].offensive; // Base 5,000,000
+    if (heuristicLevel === 'novice') {
+        doubleThreeScoreToAdd = 0; // Still 0 for Novice, too complex.
+    } else if (heuristicLevel === 'apprentice') {
+        doubleThreeScoreToAdd *= 0.0001; // e.g., 500 - very low awareness
+    } else if (heuristicLevel === 'adept') {
+        doubleThreeScoreToAdd *= 0.01; // e.g., 50,000 - Adept starts to see them
+    }
+    // Expert, Master use full score
 
     if (doubleThreeScoreToAdd > 0) {
         const staticPatternDirections = [ { dr: 0, dc: 1 }, { dr: 1, dc: 0 }, { dr: 1, dc: 1 }, { dr: 1, dc: -1 } ];
