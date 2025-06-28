@@ -12,95 +12,102 @@ let currentAiDifficulty = 3; // Default to Intermediate
 let currentSearchDepth = AI_DIFFICULTY_LEVELS[currentAiDifficulty];
 
 // --- Heuristic Evaluation ---
-// Scores for different patterns. Positive for AI, negative for Player.
-// These values are critical and will need tuning.
+// Scores for different patterns, consistent with design.md "棋型库"
+// Positive for AI (PLAYER_WHITE), negative for Player (PLAYER_BLACK) when evaluated by (AI_score - Player_score)
 const PATTERN_SCORES = {
-    FIVE_IN_A_ROW: 100000,      // ⚫⚫⚫⚫⚫ (Victory)
-    LIVE_FOUR: 10000,           // ⚪⚫⚫⚫⚫⚪
-    RUSH_FOUR_ONE_SIDED_BLOCK: 9000, // ❌⚫⚫⚫⚫⚪ (AI perspective, if AI can make this)
-    RUSH_FOUR_OTHER_SIDED_BLOCK: 8000, // ⚪⚫⚫⚫⚫❌ (AI perspective)
-    DEAD_FOUR: 0, // Should not happen or means blocked - no immediate value.
-    
-    LIVE_THREE: 1000,           // ⚪⚫⚫⚫⚪
-    SLEEP_THREE_ONE_BLOCK: 500, // ❌⚫⚫⚫⚪ or ⚪⚫⚫⚫❌
-    SLEEP_THREE_MIDDLE_BLOCK: 400, // ⚪⚫⚫⚪⚫⚪ (less valuable than open ended)
-
-    LIVE_TWO: 100,              // ⚪⚫⚫⚪
-    SLEEP_TWO: 50,              // ❌⚫⚫⚪ or ⚪⚫⚫⚪
-
-    LIVE_ONE: 10,               // ⚪⚫⚪
-    SLEEP_ONE: 5,               // ❌⚫⚪ or ⚪⚫❌
-
-    // Defensive scores (when evaluating opponent's patterns to block)
-    // These might be implicitly handled by (AI_score - Player_score)
-    // or we can explicitly add scores for blocking opponent's strong patterns.
+    FIVE_IN_A_ROW: 100000,  // 连五 (Victory)
+    LIVE_FOUR: 10000,       // 活四 (⚪⚫⚫⚫⚫⚪)
+    RUSH_FOUR: 1000,        // 冲四 (e.g., ❌⚫⚫⚫⚫⚪ or ⚪⚫⚫⚫⚫❌) - design.md had 1000, was 9000/8000
+    LIVE_THREE: 1000,       // 活三 (⚪⚫⚫⚫⚪) - design.md had 1000
+    SLEEP_THREE: 100,       // 眠三 (e.g., ❌⚫⚫⚫⚪) - design.md had 100, was 500/400
+    LIVE_TWO: 100,          // 活二 (⚪⚫⚫⚪) - design.md had 100
+    SLEEP_TWO: 10,          // 眠二 (❌⚫⚫⚪) - design.md had 10, was 50
+    // LIVE_ONE and SLEEP_ONE are less critical for strategic evaluation, can be omitted for now or given very low scores if added.
+    // DEAD_FOUR (e.g. XOOOOX) or other fully blocked patterns are typically score 0 or very low.
 };
 
 
 // Heuristic evaluation function for the current board state
 // Returns a score where positive is good for AI (PLAYER_WHITE), negative for Player (PLAYER_BLACK)
 function evaluateBoard(board, aiPlayer = PLAYER_WHITE) {
-    let aiScore = 0;
-    let playerScore = 0;
     const humanPlayer = (aiPlayer === PLAYER_BLACK) ? PLAYER_WHITE : PLAYER_BLACK;
 
-    // Evaluate for AI
-    aiScore += calculateScoreForPlayer(board, aiPlayer);
-    // Evaluate for Human Player
-    playerScore += calculateScoreForPlayer(board, humanPlayer);
-    
-    // If AI has a winning move, prioritize it heavily
-    if (hasWinningPattern(board, aiPlayer, PATTERN_SCORES.FIVE_IN_A_ROW)) return PATTERN_SCORES.FIVE_IN_A_ROW * 10; // Ensure it's much higher
-    // If human has a winning move, AI must block it, also very high (negative) score
-    if (hasWinningPattern(board, humanPlayer, PATTERN_SCORES.FIVE_IN_A_ROW)) return -PATTERN_SCORES.FIVE_IN_A_ROW * 10;
+    const aiScore = calculateScoreForPlayer(board, aiPlayer);
+    const playerScore = calculateScoreForPlayer(board, humanPlayer);
+
+    // Check for immediate win/loss, which overrides other scores
+    // Note: calculateScoreForPlayer should return PATTERN_SCORES.FIVE_IN_A_ROW if a five-in-a-row is found.
+    // So, we can check this directly from the returned scores.
+    // A score of PATTERN_SCORES.FIVE_IN_A_ROW or more signifies a win.
+    if (aiScore >= PATTERN_SCORES.FIVE_IN_A_ROW) return PATTERN_SCORES.FIVE_IN_A_ROW * 10; // Prioritize AI win
+    if (playerScore >= PATTERN_SCORES.FIVE_IN_A_ROW) return -PATTERN_SCORES.FIVE_IN_A_ROW * 10; // Prioritize blocking player win
 
     return aiScore - playerScore;
 }
 
-function hasWinningPattern(board, player, winScoreThreshold) {
-    // This is a simplified check. A full pattern check is more robust.
-    // For actual win condition, checkWin in game.js is used.
-    // This is for the evaluator to see if a FIVE_IN_A_ROW pattern exists.
-    // The detailed pattern matching in calculateScoreForPlayer should identify this.
-    // Let's rely on calculateScoreForPlayer to return a very high score for five-in-a-row.
-    // This function might be redundant if calculateScoreForPlayer handles win scores correctly.
-    return false; // Placeholder
-}
-
-
 // Helper to calculate score for a specific player based on patterns
+// This function iterates through each cell and, if it's the player's stone,
+// checks for patterns starting at that stone in all directions.
 function calculateScoreForPlayer(board, player) {
     let totalScore = 0;
     const directions = [
         { dr: 0, dc: 1 }, // Horizontal
         { dr: 1, dc: 0 }, // Vertical
-        { dr: 1, dc: 1 }, // Diagonal \
-        { dr: 1, dc: -1 } // Diagonal /
+        { dr: 1, dc: 1 }, // Diagonal \ (down-right)
+        { dr: 1, dc: -1 } // Diagonal / (down-left)
     ];
+
+    // To avoid counting the same pattern multiple times (e.g. a horizontal line of 5 starting at (0,0) and also at (0,1), etc.)
+    // we can use a Set to store coordinates of stones already part of a counted valuable pattern in a specific direction.
+    // However, a simpler approach for now is to ensure that `checkPattern` is robust and we sum scores.
+    // The primary risk of overcounting is if a single line of stones forms multiple patterns (e.g. a live four also contains live threes).
+    // The current `if/else if` structure in the plan will prevent this for a single starting point and direction.
+    // We need to ensure that a line of 5 isn't also counted as a line of 4, 3 etc.
+    // The order of checks (longest to shortest) handles this.
+
+    const opponent = (player === PLAYER_BLACK) ? PLAYER_WHITE : PLAYER_BLACK;
 
     for (let r = 0; r < BOARD_SIZE; r++) {
         for (let c = 0; c < BOARD_SIZE; c++) {
-            // Evaluate patterns starting at (r,c) only if it's player's stone or empty (for potential)
-            // For simplicity, let's focus on existing stones for now.
-            // A more advanced eval would check empty spots for potential patterns.
+            // Only evaluate patterns originating from the player's own stones
+            if (board[r][c] === player) {
+                directions.forEach(dir => {
+                    // Order of checks is important: from most valuable/longest to least.
+                    // This prevents a five-in-a-row from also being counted as a four, three, etc., from the same starting point and direction.
 
-            if (board[r][c] === player || board[r][c] === EMPTY) {
-                 directions.forEach(dir => {
-                    // Check for 5-in-a-row
-                    if (checkPattern(board, r, c, dir, player, 5, true)) totalScore += PATTERN_SCORES.FIVE_IN_A_ROW;
-                    // Check for Live Four
-                    else if (checkPattern(board, r, c, dir, player, 4, true, true)) totalScore += PATTERN_SCORES.LIVE_FOUR;
-                    // Check for Rush Four (one side open)
-                    else if (checkPattern(board, r, c, dir, player, 4, true, false) || checkPattern(board, r, c, dir, player, 4, false, true)) totalScore += PATTERN_SCORES.RUSH_FOUR_ONE_SIDED_BLOCK; // Simplified for now
-                    // Check for Live Three
-                    else if (checkPattern(board, r, c, dir, player, 3, true, true)) totalScore += PATTERN_SCORES.LIVE_THREE;
-                    // Check for Sleep Three
-                    else if (checkPattern(board, r, c, dir, player, 3, true, false) || checkPattern(board, r, c, dir, player, 3, false, true)) totalScore += PATTERN_SCORES.SLEEP_THREE_ONE_BLOCK;
-                    // Check for Live Two
-                    else if (checkPattern(board, r, c, dir, player, 2, true, true)) totalScore += PATTERN_SCORES.LIVE_TWO;
-                    // Check for Sleep Two
-                    else if (checkPattern(board, r, c, dir, player, 2, true, false) || checkPattern(board, r, c, dir, player, 2, false, true)) totalScore += PATTERN_SCORES.SLEEP_TWO;
-                    // Add more patterns like live one, sleep one if needed
+                    // Check for 5-in-a-row (Victory Condition)
+                    // For FIVE_IN_A_ROW, open ends are not strictly necessary as it's a win.
+                    // The checkPattern for length 5 can ignore openStart/openEnd or pass null.
+                    if (checkPattern(board, r, c, dir, player, 5)) { // No open-end check needed for win
+                        totalScore += PATTERN_SCORES.FIVE_IN_A_ROW;
+                    }
+                    // Check for Live Four: ⚪⚫⚫⚫⚫⚪
+                    else if (checkPattern(board, r, c, dir, player, 4, true, true)) {
+                        totalScore += PATTERN_SCORES.LIVE_FOUR;
+                    }
+                    // Check for Rush Four: e.g., ❌⚫⚫⚫⚫⚪ (blocked one side, open other) or ⚪⚫⚫⚫⚫❌
+                    else if (checkPattern(board, r, c, dir, player, 4, true, false, opponent) || // Open start, blocked end
+                               checkPattern(board, r, c, dir, player, 4, false, true, opponent)) { // Blocked start, open end
+                        totalScore += PATTERN_SCORES.RUSH_FOUR;
+                    }
+                    // Check for Live Three: ⚪⚫⚫⚫⚪
+                    else if (checkPattern(board, r, c, dir, player, 3, true, true)) {
+                        totalScore += PATTERN_SCORES.LIVE_THREE;
+                    }
+                    // Check for Sleep Three: e.g., ❌⚫⚫⚫⚪ or ⚪⚫⚫⚫❌
+                    else if (checkPattern(board, r, c, dir, player, 3, true, false, opponent) || // Open start, blocked end
+                               checkPattern(board, r, c, dir, player, 3, false, true, opponent)) { // Blocked start, open end
+                        totalScore += PATTERN_SCORES.SLEEP_THREE;
+                    }
+                    // Check for Live Two: ⚪⚫⚫⚪
+                    else if (checkPattern(board, r, c, dir, player, 2, true, true)) {
+                        totalScore += PATTERN_SCORES.LIVE_TWO;
+                    }
+                    // Check for Sleep Two: e.g., ❌⚫⚫⚪ or ⚪⚫⚫⚪
+                    else if (checkPattern(board, r, c, dir, player, 2, true, false, opponent) || // Open start, blocked end
+                               checkPattern(board, r, c, dir, player, 2, false, true, opponent)) { // Blocked start, open end
+                        totalScore += PATTERN_SCORES.SLEEP_TWO;
+                    }
                 });
             }
         }
@@ -110,45 +117,79 @@ function calculateScoreForPlayer(board, player) {
 
 // Generalized pattern checker
 // board: the game board
-// r, c: starting row, col
+// r, c: starting row, col of the pattern sequence
 // dir: direction {dr, dc}
 // player: the player whose pattern we are checking
 // length: expected length of the stone sequence (e.g., 4 for four-in-a-row)
-// openStart: true if the spot before the sequence must be empty
-// openEnd: true if the spot after the sequence must be empty
-function checkPattern(board, r, c, dir, player, length, openStart = null, openEnd = null) {
-    // Check sequence of stones
+// openStart (optional): Boolean. If true, spot before sequence must be EMPTY. If false, spot must be opponent or edge. If null, not checked.
+// openEnd (optional): Boolean. If true, spot after sequence must be EMPTY. If false, spot must be opponent or edge. If null, not checked.
+// opponent (optional): Player ID of the opponent. Required if openStart/openEnd is false (and not null).
+function checkPattern(board, r, c, dir, player, length, openStart = null, openEnd = null, opponent = null) {
+    // 1. Check if the sequence of `length` stones belongs to `player`
+    // The pattern must start at (r,c) and extend for `length` stones.
     for (let i = 0; i < length; i++) {
         const curR = r + i * dir.dr;
         const curC = c + i * dir.dc;
-        if (!isInBounds(curR, curC) || board[curR][curC] !== player) {
-            return false; // Sequence broken or out of bounds
+        // If any stone in the sequence is out of bounds or not the player's, it's not this pattern.
+        if (!isInBounds(curC, curR) || board[curR][curC] !== player) {
+            return false;
         }
     }
 
-    // Check open ends if specified
-    if (openStart !== null) {
+    // 2. Check the status of the spot *before* the sequence (openStart)
+    if (openStart !== null) { // Only check if openStart is true or false (not null)
         const beforeR = r - dir.dr;
         const beforeC = c - dir.dc;
-        if (openStart) { // Must be empty
-            if (!isInBounds(beforeR, beforeC) || board[beforeR][beforeC] !== EMPTY) return false;
-        } else { // Must be blocked (or edge)
-            if (isInBounds(beforeR, beforeC) && board[beforeR][beforeC] === EMPTY) return false;
-            // If it's out of bounds, it's considered blocked by the edge.
+
+        if (openStart === true) { // Must be EMPTY
+            // If 'before' spot is out of bounds, it's not empty.
+            // If 'before' spot is not EMPTY, condition fails.
+            if (!isInBounds(beforeC, beforeR) || board[beforeR][beforeC] !== EMPTY) {
+                return false;
+            }
+        } else { // openStart === false, means must be BLOCKED (by opponent or edge)
+            if (opponent === null) {
+                // This case should ideally be prevented by calling code, but as a safeguard:
+                console.warn("checkPattern: opponent ID is null when checking for a blocked start.");
+                return false; // Cannot confirm blockage without opponent ID
+            }
+            if (isInBounds(beforeC, beforeR)) { // If 'before' spot is in bounds...
+                // ...it must be occupied by the opponent. If it's EMPTY or player's own, it's not correctly blocked.
+                if (board[beforeR][beforeC] !== opponent) {
+                    return false;
+                }
+            }
+            // If 'before' spot is out of bounds (e.g., r - dir.dr < 0), it's considered blocked by the edge. This is valid.
         }
     }
 
-    if (openEnd !== null) {
-        const afterR = r + length * dir.dr;
+    // 3. Check the status of the spot *after* the sequence (openEnd)
+    if (openEnd !== null) { // Only check if openEnd is true or false (not null)
+        const afterR = r + length * dir.dr; // Position of stone *after* the sequence of `length`
         const afterC = c + length * dir.dc;
-        if (openEnd) { // Must be empty
-            if (!isInBounds(afterR, afterC) || board[afterR][afterC] !== EMPTY) return false;
-        } else { // Must be blocked (or edge)
-            if (isInBounds(afterR, afterC) && board[afterR][afterC] === EMPTY) return false;
-             // If it's out of bounds, it's considered blocked by the edge.
+
+        if (openEnd === true) { // Must be EMPTY
+            // If 'after' spot is out of bounds, it's not empty.
+            // If 'after' spot is not EMPTY, condition fails.
+            if (!isInBounds(afterC, afterR) || board[afterR][afterC] !== EMPTY) {
+                return false;
+            }
+        } else { // openEnd === false, means must be BLOCKED (by opponent or edge)
+            if (opponent === null) {
+                console.warn("checkPattern: opponent ID is null when checking for a blocked end.");
+                return false; // Cannot confirm blockage
+            }
+            if (isInBounds(afterC, afterR)) { // If 'after' spot is in bounds...
+                // ...it must be occupied by the opponent.
+                if (board[afterR][afterC] !== opponent) {
+                    return false;
+                }
+            }
+            // If 'after' spot is out of bounds (e.g., r + length * dir.dr >= BOARD_SIZE), it's considered blocked by the edge. This is valid.
         }
     }
-    return true;
+
+    return true; // All conditions for the pattern are met
 }
 
 
@@ -158,7 +199,7 @@ function findBestMove(board, depth, alpha, beta, maximizingPlayer, aiPlayer = PL
         return { score: evaluateBoard(board, aiPlayer), move: null };
     }
 
-    const possibleMoves = getPossibleMoves(board, aiPlayer, maximizingPlayer);
+    const possibleMoves = getPossibleMoves(board); // Removed unused parameters
     if (possibleMoves.length === 0) { // No moves left, should be a draw or handled by isGameOver
          return { score: evaluateBoard(board, aiPlayer), move: null };
     }
@@ -252,7 +293,7 @@ function checkWinForPlayer(currentBoard, player) {
 
 
 // Get possible moves (empty cells, potentially optimized)
-function getPossibleMoves(board, forPlayer, isMaximizingTurn) {
+function getPossibleMoves(board) {
     const moves = [];
     // Optimization: only consider moves near existing stones
     const occupiedCells = [];
@@ -365,7 +406,8 @@ function evaluatePointOmniscience(board, x, y, player) {
     // Check for creating a live four
     if (createsPattern(tempBoard, x, y, player, 4, true, true)) score += PATTERN_SCORES.LIVE_FOUR / 10; // Scaled down for point eval
     // Check for creating a rush four
-    else if (createsPattern(tempBoard, x, y, player, 4, true, false) || createsPattern(tempBoard, x, y, player, 4, false, true)) score += PATTERN_SCORES.RUSH_FOUR_ONE_SIDED_BLOCK / 10;
+    // createsPattern internally determines opponent, so no need to pass it here.
+    else if (createsPattern(tempBoard, x, y, player, 4, true, false) || createsPattern(tempBoard, x, y, player, 4, false, true)) score += PATTERN_SCORES.RUSH_FOUR / 10;
     // Check for creating a live three
     else if (createsPattern(tempBoard, x, y, player, 3, true, true)) score += PATTERN_SCORES.LIVE_THREE / 10;
     
@@ -379,18 +421,33 @@ function evaluatePointOmniscience(board, x, y, player) {
     return score;
 }
 
-// Helper for evaluatePointOmniscience: checks if placing stone at (lastX, lastY) creates a specific pattern
+// Helper for evaluatePointOmniscience: checks if placing stone at (lastX, lastY) by `player` creates a specific pattern.
+// `lastX`, `lastY` is the coordinate of the stone just placed by `player`.
 function createsPattern(board, lastX, lastY, player, length, openStart, openEnd) {
     const directions = [
-        { dr: 0, dc: 1 }, { dr: 1, dc: 0 }, { dr: 1, dc: 1 }, { dr: 1, dc: -1 } 
+        { dr: 0, dc: 1 }, { dr: 1, dc: 0 }, { dr: 1, dc: 1 }, { dr: 1, dc: -1 }
     ];
+    const opponent = (player === PLAYER_BLACK) ? PLAYER_WHITE : PLAYER_BLACK;
+
     for (const dir of directions) {
-        // Check patterns centered around or starting/ending at (lastX, lastY)
-        // This requires checking up to 'length-1' stones in each direction from (lastX, lastY)
-        for (let i = 0; i < length; i++) {
-            const startR = lastY - i * dir.dr;
-            const startC = lastX - i * dir.dc;
-            if (checkPattern(board, startR, startC, dir, player, length, openStart, openEnd)) {
+        // We need to check all possible start positions of a pattern of `length`
+        // such that the pattern includes the stone at (lastX, lastY).
+        // A pattern of `length` stones has `length` possible positions for the stone (lastX, lastY).
+        // If (lastX, lastY) is the k-th stone in the pattern (0-indexed), then the pattern starts at:
+        // startR = lastY - k * dir.dr
+        // startC = lastX - k * dir.dc
+        for (let k = 0; k < length; k++) { // k is the 0-indexed position of (lastX, lastY) within the pattern
+            const startR = lastY - k * dir.dr;
+            const startC = lastX - k * dir.dc;
+
+            // Ensure the pattern actually starts at a valid stone of the player,
+            // although checkPattern will verify the whole sequence.
+            // More importantly, ensure (lastX, lastY) is indeed part of this checked pattern.
+            // The current (r,c) for checkPattern is (startR, startC).
+            // The stone at (lastX, lastY) must be board[startR + k*dir.dr][startC + k*dir.dc]
+            // which is board[lastY][lastX], and it must be `player`. This is given.
+
+            if (checkPattern(board, startR, startC, dir, player, length, openStart, openEnd, opponent)) {
                 return true;
             }
         }
