@@ -113,7 +113,23 @@ function handleNewGame() {
     if (window.aiApi && window.aiApi.resetAi) { // If AI needs a reset
         window.aiApi.resetAi();
     }
-    uiApi.drawGame();   
+
+    // Clear omniscient mode indicator if it exists
+    const omniscientIndicator = document.getElementById('omniscient-mode-indicator');
+    if (omniscientIndicator) {
+        omniscientIndicator.remove();
+    }
+
+    // Reset the omniscience mode toggle and internal state
+    const omniscienceToggle = document.getElementById('omniscience-mode');
+    if (omniscienceToggle && omniscienceToggle.checked) {
+        omniscienceToggle.checked = false; // Visually uncheck the toggle
+        if (uiApi && uiApi.toggleOmniscienceMode) { // Ensure uiApi and function exist
+            uiApi.toggleOmniscienceMode(false); // Update internal state and trigger related UI changes (like removing hints)
+        }
+    }
+
+    uiApi.drawGame();   // This will redraw the board, and with omniscience mode off, hints won't be drawn.
 }
 
 function handleUndo() {

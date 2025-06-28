@@ -50,6 +50,18 @@ function initUIInternal() {
 
 
 // --- Canvas Modal Control Functions ---
+
+// Helper to manage external button states
+const controlButtonIds = ['new-game-btn', 'undo-btn', 'ai-difficulty', 'omniscience-mode'];
+function setExternalControlsDisabled(disabled) {
+    controlButtonIds.forEach(id => {
+        const button = document.getElementById(id);
+        if (button) {
+            button.disabled = disabled;
+        }
+    });
+}
+
 function showMessageModalInternal(message) {
     isModalVisible = true;
     modalType = 'message';
@@ -57,6 +69,7 @@ function showMessageModalInternal(message) {
     modalButtons = [];
     modalOnYes = null;
     modalOnNo = null;
+    setExternalControlsDisabled(true); // Disable HTML buttons
     console.log("UI: Showing canvas message modal:", message);
     drawGameInternal();
 }
@@ -68,11 +81,15 @@ function showConfirmModalInternal(message, onYesCallback, onNoCallback) {
     modalOnYes = onYesCallback;
     modalOnNo = onNoCallback;
     modalButtons = [];
+    setExternalControlsDisabled(true); // Disable HTML buttons for confirm modal too
     console.log("UI: Showing canvas confirm modal:", message);
     drawGameInternal();
 }
 
 function closeModalInternal() {
+    if (isModalVisible) { // Only re-enable if a modal was actually visible
+        setExternalControlsDisabled(false); // Re-enable HTML buttons
+    }
     isModalVisible = false;
     modalType = null;
     modalMessage = "";
