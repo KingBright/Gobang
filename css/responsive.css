@@ -1,0 +1,44 @@
+/* Responsive styling for the Gomoku AI Trainer */
+
+/* Mobile-first approach: Default styles in style.css can be considered for smaller screens */
+
+/* Desktop and larger tablets */
+@media (min-width: 768px) {
+    #game-container {
+        flex-direction: row;
+        align-items: flex-start;
+    }
+
+    #controls {
+        flex-direction: column;
+        margin-top: 0;
+        margin-left: 20px;
+        align-items: stretch; /* Make buttons full width of control panel */
+    }
+
+    #controls button, #controls select {
+        width: 100%;
+        margin-bottom: 10px; /* Add some space between vertical buttons */
+    }
+    
+    #game-info {
+        margin-top: 0;
+        margin-left: 20px;
+        writing-mode: vertical-rl; /* Example: if info is to be displayed vertically */
+        text-orientation: mixed;
+        min-height: auto;
+        min-width: 50px; /* Adjust as needed */
+    }
+}
+
+/* Further adjustments for very small screens if necessary */
+@media (max-width: 400px) {
+    #controls {
+        flex-wrap: wrap; /* Allow buttons to wrap on very small screens */
+        justify-content: center;
+    }
+    #controls button, #controls select {
+        flex-basis: calc(50% - 5px); /* Two buttons per row, accounting for gap */
+    }
+}
+

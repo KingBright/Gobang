@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gomoku AI Trainer</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/responsive.css">
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="gomoku-board" width="450" height="450"></canvas> <!-- Initial size, will be managed by JS/CSS -->
+        
+        <div id="controls-panel">
+            <div id="controls">
+                <button id="new-game-btn">New Game</button>
+                <button id="undo-btn">Undo</button>
+                <div class="control-group">
+                    <label for="ai-difficulty">AI Level:</label>
+                    <select id="ai-difficulty">
+                        <!-- Options will be populated by main.js -->
+                    </select>
+                </div>
+                <div class="control-group">
+                    <label for="omniscience-mode">Omniscience Mode:</label>
+                    <input type="checkbox" id="omniscience-mode">
+                </div>
+            </div>
+            
+            <div id="game-info">
+                <p id="game-message">Welcome to Gomoku!</p>
+                <!-- More info like AI thinking time could be added here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- JS files are loaded here for simplicity. For production, consider defer/async or bundling. -->
+    <script src="js/utils.js"></script>
+    <script src="js/game.js"></script>
+    <script src="js/ai.js"></script>
+    <script src="js/ui.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>
+

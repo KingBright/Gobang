@@ -1,0 +1,112 @@
+/* Basic styling for the Gomoku AI Trainer */
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start; /* Align to top for better layout with controls */
+    min-height: 100vh;
+    background-color: #f4f7f6;
+    margin: 0;
+    padding: 20px; /* Increased padding for overall page */
+    box-sizing: border-box;
+    color: #333;
+}
+
+#game-container {
+    display: flex;
+    flex-direction: column; /* Default: board on top, controls below */
+    align-items: center;
+    background-color: #ffffff;
+    padding: 25px;
+    border-radius: 12px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    gap: 20px; /* Space between canvas and controls-panel */
+}
+
+#gomoku-board {
+    border: 2px solid #4a4a4a;
+    cursor: pointer;
+    background-color: #e3bA8f; /* Traditional wood-like color for the board */
+    /* width and height will be set by JS, or CSS for responsive scaling */
+}
+
+#controls-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    width: 100%; /* Take full width in column layout */
+    max-width: 450px; /* Align with typical board width */
+}
+
+#controls {
+    display: flex;
+    flex-direction: column; /* Stack controls vertically */
+    gap: 12px; /* Space between control groups/buttons */
+    padding: 15px;
+    background-color: #f9f9f9;
+    border-radius: 8px;
+    border: 1px solid #e0e0e0;
+}
+
+.control-group {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.control-group label {
+    margin-right: 10px;
+    font-size: 0.95em;
+    color: #555;
+}
+
+#controls button, #controls select {
+    padding: 10px 18px;
+    border: 1px solid #cccccc;
+    border-radius: 6px;
+    background-color: #e9ecef;
+    color: #333;
+    cursor: pointer;
+    font-size: 0.9em;
+    transition: background-color 0.2s ease;
+}
+
+#controls button:hover, #controls select:hover {
+    background-color: #d1d9e0;
+}
+
+#controls select {
+    flex-grow: 1; /* Allow select to take available space in its group if needed */
+    min-width: 100px; /* Ensure select has some minimum width */
+}
+
+#omniscience-mode {
+    margin-left: 5px; /* Align checkbox nicely with its label */
+    transform: scale(1.1); /* Slightly larger checkbox */
+}
+
+#game-info {
+    padding: 12px;
+    background-color: #e8f0fe; /* Light blue for info messages */
+    border-radius: 8px;
+    border: 1px solid #c8d9f0;
+    text-align: center;
+}
+
+#game-message {
+    margin: 0;
+    font-size: 1.05em;
+    font-weight: 500;
+    color: #2c3e50;
+    min-height: 22px; /* Prevent layout shifts */
+}
+
+/* Placeholder for later, if icons are used */
+.icon {
+    width: 16px;
+    height: 16px;
+    display: inline-block;
+    vertical-align: middle;
+    margin-right: 5px;
+}
+
