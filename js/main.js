@@ -148,6 +148,10 @@ function handleUndo() {
     }
     
     uiApi.drawGame(); // Redraw after undo
+    // NEW: Trigger omniscience update after general undo
+    if (uiApi.triggerOmniscienceUpdateIfActive) {
+        uiApi.triggerOmniscienceUpdateIfActive();
+    }
 }
 
 
@@ -162,6 +166,11 @@ window.handleHumanMove = function(x, y) {
 
     if (moveSuccessful) {
         uiApi.drawGame(); 
+
+        // NEW: Trigger omniscience update if active, after player's move is drawn
+        if (uiApi.triggerOmniscienceUpdateIfActive) { // Check if function exists
+            uiApi.triggerOmniscienceUpdateIfActive();
+        }
 
         if (gameApi.getGameState() === GAME_STATE_ENDED) {
             console.log("Main.js: Game ended after human move.");
@@ -205,6 +214,10 @@ window.handleHumanMove = function(x, y) {
                     gameApi.undoMove(); // Undoes player's last move
                     gameApi.setGameState(GAME_STATE_PLAYING); // Resume
                     uiApi.drawGame(); // Redraw, player can move again
+                    // NEW: Trigger omniscience update after undo
+                    if (uiApi.triggerOmniscienceUpdateIfActive) {
+                        uiApi.triggerOmniscienceUpdateIfActive();
+                    }
                 }
             );
         } else {

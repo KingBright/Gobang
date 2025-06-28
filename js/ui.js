@@ -499,7 +499,19 @@ window.uiApi = {
     drawGame: drawGameInternal,
     toggleOmniscienceMode: toggleOmniscienceModeInternal,
     showSmartUndoModal: showSmartUndoModalInternal,
-    showGameMessageModal: showMessageModalInternal
+    showGameMessageModal: showMessageModalInternal,
+    triggerOmniscienceUpdateIfActive: function() { // Expose the trigger function
+        if (isOmniscienceModeActive) {
+            const board = window.gameApi.getBoard();
+            const gameState = window.gameApi.getGameState();
+            const currentPlayer = window.gameApi.getCurrentPlayer();
+            // Only calculate hints if game is playing and it's human's turn (PLAYER_BLACK)
+            if (gameState === GAME_STATE_PLAYING && currentPlayer === PLAYER_BLACK) {
+                console.log("UI: Externally triggered omniscience update.");
+                calculateAndDrawOmniHintsInternal(board); // This is async
+            }
+        }
+    }
 };
 
 console.log("ui.js loaded and API exposed via window.uiApi. Responsive canvas enabled.");
