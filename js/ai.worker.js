@@ -26,18 +26,22 @@ const PT_DEAD_THREE = 'DEAD_THREE';
 const PT_LIVE_TWO = 'LIVE_TWO';
 const PT_DEAD_TWO = 'DEAD_TWO';
 const PT_SINGLE = 'SINGLE';
+const PT_LIVE_JUMP_THREE = 'LIVE_JUMP_THREE'; // _X_X_
+const PT_DEAD_JUMP_THREE = 'DEAD_JUMP_THREE'; // e.g. OX_X_ or _X_XO
 
 // --- Heuristic Evaluation Scores ---
 const PATTERN_SCORES = {
-    [PT_FIVE]:         { offensive: 100000000, defensive: 100000000 },
-    [PT_LIVE_FOUR]:    { offensive: 10000000,  defensive: 10000000 },
-    [PT_DOUBLE_THREE]: { offensive: 5000000,   defensive: 5000000 },
-    [PT_DEAD_FOUR]:    { offensive: 50000,     defensive: 100000 },
-    [PT_LIVE_THREE]:   { offensive: 1000,      defensive: 5000 },
-    [PT_DEAD_THREE]:   { offensive: 100,       defensive: 200 },
-    [PT_LIVE_TWO]:     { offensive: 50,        defensive: 100 },
-    [PT_DEAD_TWO]:     { offensive: 10,        defensive: 20 },
-    [PT_SINGLE]:       { offensive: 1,         defensive: 2 }
+    [PT_FIVE]:            { offensive: 100000000, defensive: 100000000 },
+    [PT_LIVE_FOUR]:       { offensive: 10000000,  defensive: 10000000 },
+    [PT_DOUBLE_THREE]:    { offensive: 5000000,   defensive: 5000000 },
+    [PT_DEAD_FOUR]:       { offensive: 50000,     defensive: 100000 },
+    [PT_LIVE_THREE]:      { offensive: 1000,      defensive: 5000 },
+    [PT_LIVE_JUMP_THREE]: { offensive: 300,       defensive: 600 },
+    [PT_DEAD_JUMP_THREE]: { offensive: 70,        defensive: 150 },
+    [PT_DEAD_THREE]:      { offensive: 100,       defensive: 200 },
+    [PT_LIVE_TWO]:        { offensive: 50,        defensive: 100 },
+    [PT_DEAD_TWO]:        { offensive: 10,        defensive: 20 },
+    [PT_SINGLE]:          { offensive: 1,         defensive: 2 }
 };
 
 // --- Bitboard Representation ---
@@ -576,6 +580,94 @@ function detectDiagonalDownLeftDeadTwoBitwise(playerBB, opponentBB, emptyBB) {
     return BitwiseORBoardArrays(dt1,dt2);
 }
 
+// --- Gapped Pattern Detection ---
+function detectHorizontalLiveJumpThreeBitwise(playerBB, emptyBB) { // _P_P_
+    const p_bb = playerBB;
+    const e_bb = emptyBB;
+    let E_neg1 = shiftBoardHorizontalRight(e_bb, 1);
+    let P0     = p_bb;
+    let E_pos1 = shiftBoardHorizontalLeft(e_bb, 1);
+    let P_pos2 = shiftBoardHorizontalLeft(p_bb, 2);
+    let E_pos3 = shiftBoardHorizontalLeft(e_bb, 3);
+    let r = BitwiseANDBoardArrays(E_neg1, P0); r = BitwiseANDBoardArrays(r, E_pos1); r = BitwiseANDBoardArrays(r, P_pos2); r = BitwiseANDBoardArrays(r, E_pos3);
+    return r;
+}
+function detectVerticalLiveJumpThreeBitwise(playerBB, emptyBB) { // _P_P_ stacked
+    const p_bb = playerBB;
+    const e_bb = emptyBB;
+    let E_neg1 = shiftBoardVertical(e_bb, 1);
+    let P0     = p_bb;
+    let E_pos1 = shiftBoardVertical(e_bb, -1);
+    let P_pos2 = shiftBoardVertical(p_bb, -2);
+    let E_pos3 = shiftBoardVertical(e_bb, -3);
+    let r = BitwiseANDBoardArrays(E_neg1, P0); r = BitwiseANDBoardArrays(r, E_pos1); r = BitwiseANDBoardArrays(r, P_pos2); r = BitwiseANDBoardArrays(r, E_pos3);
+    return r;
+}
+function detectDiagonalDownRightLiveJumpThreeBitwise(playerBB, emptyBB) { // '\' _P_P_
+    const p_bb = playerBB; const e_bb = emptyBB;
+    let E_n1 = shiftBoardDiagonalDownRight(e_bb,1), P0=p_bb, E_p1=shiftBoardDiagonalDownRight(e_bb,-1), P_p2=shiftBoardDiagonalDownRight(p_bb,-2), E_p3=shiftBoardDiagonalDownRight(e_bb,-3);
+    let r = BitwiseANDBoardArrays(E_n1,P0); r=BitwiseANDBoardArrays(r,E_p1); r=BitwiseANDBoardArrays(r,P_p2); r=BitwiseANDBoardArrays(r,E_p3);
+    return r;
+}
+function detectDiagonalDownLeftLiveJumpThreeBitwise(playerBB, emptyBB) { // '/' _P_P_
+    const p_bb = playerBB; const e_bb = emptyBB;
+    let E_n1=shiftBoardDiagonalDownLeft(e_bb,1), P0=p_bb, E_p1=shiftBoardDiagonalDownLeft(e_bb,-1), P_p2=shiftBoardDiagonalDownLeft(p_bb,-2), E_p3=shiftBoardDiagonalDownLeft(e_bb,-3);
+    let r=BitwiseANDBoardArrays(E_n1,P0); r=BitwiseANDBoardArrays(r,E_p1); r=BitwiseANDBoardArrays(r,P_p2); r=BitwiseANDBoardArrays(r,E_p3);
+    return r;
+}
+function detectHorizontalDeadJumpThreeBitwise(playerBB, opponentBB, emptyBB) {
+    const p_bb = playerBB; const o_bb = opponentBB; const e_bb = emptyBB;
+    let P0 = p_bb;
+    let E_pos1 = shiftBoardHorizontalLeft(e_bb, 1);
+    let P_pos2 = shiftBoardHorizontalLeft(p_bb, 2);
+
+    // Case 1: O P E P _
+    let O_neg1 = shiftBoardHorizontalRight(o_bb, 1);
+    let E_pos3_c1 = shiftBoardHorizontalLeft(e_bb, 3);
+    let r1 = BitwiseANDBoardArrays(O_neg1, P0); r1 = BitwiseANDBoardArrays(r1, E_pos1); r1 = BitwiseANDBoardArrays(r1, P_pos2); r1 = BitwiseANDBoardArrays(r1, E_pos3_c1);
+
+    // Case 2: _ P E P O
+    let E_neg1 = shiftBoardHorizontalRight(e_bb, 1);
+    let O_pos3 = shiftBoardHorizontalLeft(o_bb, 3);
+    let r2 = BitwiseANDBoardArrays(E_neg1, P0); r2 = BitwiseANDBoardArrays(r2, E_pos1); r2 = BitwiseANDBoardArrays(r2, P_pos2); r2 = BitwiseANDBoardArrays(r2, O_pos3);
+
+    return BitwiseORBoardArrays(r1, r2);
+}
+function detectVerticalDeadJumpThreeBitwise(playerBB, opponentBB, emptyBB) {
+    const p_bb = playerBB; const o_bb = opponentBB; const e_bb = emptyBB;
+    let P0 = p_bb;
+    let E_pos1 = shiftBoardVertical(e_bb, -1);
+    let P_pos2 = shiftBoardVertical(p_bb, -2);
+
+    let O_neg1 = shiftBoardVertical(o_bb, 1);
+    let E_pos3_c1 = shiftBoardVertical(e_bb, -3);
+    let r1 = BitwiseANDBoardArrays(O_neg1, P0); r1 = BitwiseANDBoardArrays(r1, E_pos1); r1 = BitwiseANDBoardArrays(r1, P_pos2); r1 = BitwiseANDBoardArrays(r1, E_pos3_c1);
+
+    let E_neg1 = shiftBoardVertical(e_bb, 1);
+    let O_pos3 = shiftBoardVertical(o_bb, -3);
+    let r2 = BitwiseANDBoardArrays(E_neg1, P0); r2 = BitwiseANDBoardArrays(r2, E_pos1); r2 = BitwiseANDBoardArrays(r2, P_pos2); r2 = BitwiseANDBoardArrays(r2, O_pos3);
+
+    return BitwiseORBoardArrays(r1, r2);
+}
+function detectDiagonalDownRightDeadJumpThreeBitwise(playerBB, opponentBB, emptyBB) {
+    const p_bb=playerBB, o_bb=opponentBB, e_bb=emptyBB;
+    let P0=p_bb, E_p1=shiftBoardDiagonalDownRight(e_bb,-1), P_p2=shiftBoardDiagonalDownRight(p_bb,-2);
+    let O_n1=shiftBoardDiagonalDownRight(o_bb,1), E_p3=shiftBoardDiagonalDownRight(e_bb,-3);
+    let r1=BitwiseANDBoardArrays(O_n1,P0); r1=BitwiseANDBoardArrays(r1,E_p1); r1=BitwiseANDBoardArrays(r1,P_p2); r1=BitwiseANDBoardArrays(r1,E_p3);
+    let E_n1=shiftBoardDiagonalDownRight(e_bb,1), O_p3=shiftBoardDiagonalDownRight(o_bb,-3);
+    let r2=BitwiseANDBoardArrays(E_n1,P0); r2=BitwiseANDBoardArrays(r2,E_p1); r2=BitwiseANDBoardArrays(r2,P_p2); r2=BitwiseANDBoardArrays(r2,O_p3);
+    return BitwiseORBoardArrays(r1,r2);
+}
+function detectDiagonalDownLeftDeadJumpThreeBitwise(playerBB, opponentBB, emptyBB) {
+    const p_bb=playerBB, o_bb=opponentBB, e_bb=emptyBB;
+    let P0=p_bb, E_p1=shiftBoardDiagonalDownLeft(e_bb,-1), P_p2=shiftBoardDiagonalDownLeft(p_bb,-2);
+    let O_n1=shiftBoardDiagonalDownLeft(o_bb,1), E_p3=shiftBoardDiagonalDownLeft(e_bb,-3);
+    let r1=BitwiseANDBoardArrays(O_n1,P0); r1=BitwiseANDBoardArrays(r1,E_p1); r1=BitwiseANDBoardArrays(r1,P_p2); r1=BitwiseANDBoardArrays(r1,E_p3);
+    let E_n1=shiftBoardDiagonalDownLeft(e_bb,1), O_p3=shiftBoardDiagonalDownLeft(o_bb,-3);
+    let r2=BitwiseANDBoardArrays(E_n1,P0); r2=BitwiseANDBoardArrays(r2,E_p1); r2=BitwiseANDBoardArrays(r2,P_p2); r2=BitwiseANDBoardArrays(r2,O_p3);
+    return BitwiseORBoardArrays(r1,r2);
+}
+
 
 // Iterative pattern analysis (fallback for complex DoubleThrees in scoreMoveHeuristically for now)
 function analyzePatternOnLine(r, c, dr, dc, player) {
@@ -644,15 +736,17 @@ function calculateScoreForPlayerOffensive(player, heuristicLevel) {
 
     // Bitwise Threes
     let score_lt3 = PATTERN_SCORES[PT_LIVE_THREE].offensive;
-    if (heuristicLevel === 'novice') score_lt3 = 0;
-    if (score_lt3 > 0) {
+    if (heuristicLevel === 'novice') score_lt3 *= 0.05;
+    else if (heuristicLevel === 'apprentice') score_lt3 *= 0.2;
+    if (score_lt3 > 0) { // Check if positive after potential reduction
         totalScore += PopCountBoardArray(detectHorizontalLiveThreeBitwise(playerBB, emptyBB)) * score_lt3;
         totalScore += PopCountBoardArray(detectVerticalLiveThreeBitwise(playerBB, emptyBB)) * score_lt3;
         totalScore += PopCountBoardArray(detectDiagonalDownRightLiveThreeBitwise(playerBB, emptyBB)) * score_lt3;
         totalScore += PopCountBoardArray(detectDiagonalDownLeftLiveThreeBitwise(playerBB, emptyBB)) * score_lt3;
     }
     let score_dt3 = PATTERN_SCORES[PT_DEAD_THREE].offensive;
-    if (heuristicLevel === 'novice') score_dt3 = 0;
+    if (heuristicLevel === 'novice') score_dt3 *= 0.05;
+    else if (heuristicLevel === 'apprentice') score_dt3 *= 0.2;
     if (score_dt3 > 0) {
         totalScore += PopCountBoardArray(detectHorizontalDeadThreeBitwise(playerBB, opponentBB, emptyBB)) * score_dt3;
         totalScore += PopCountBoardArray(detectVerticalDeadThreeBitwise(playerBB, opponentBB, emptyBB)) * score_dt3;
@@ -662,7 +756,6 @@ function calculateScoreForPlayerOffensive(player, heuristicLevel) {
 
     // Bitwise Twos
     let score_lt2 = PATTERN_SCORES[PT_LIVE_TWO].offensive;
-    if (heuristicLevel === 'novice') { /* Novice can see twos by default based on table */ }
     if (score_lt2 > 0) {
         totalScore += PopCountBoardArray(detectHorizontalLiveTwoBitwise(playerBB, emptyBB)) * score_lt2;
         totalScore += PopCountBoardArray(detectVerticalLiveTwoBitwise(playerBB, emptyBB)) * score_lt2;
@@ -670,7 +763,6 @@ function calculateScoreForPlayerOffensive(player, heuristicLevel) {
         totalScore += PopCountBoardArray(detectDiagonalDownLeftLiveTwoBitwise(playerBB, emptyBB)) * score_lt2;
     }
     let score_dt2 = PATTERN_SCORES[PT_DEAD_TWO].offensive;
-     if (heuristicLevel === 'novice') { /* Novice can see twos */ }
     if (score_dt2 > 0) {
         totalScore += PopCountBoardArray(detectHorizontalDeadTwoBitwise(playerBB, opponentBB, emptyBB)) * score_dt2;
         totalScore += PopCountBoardArray(detectVerticalDeadTwoBitwise(playerBB, opponentBB, emptyBB)) * score_dt2;
@@ -678,45 +770,52 @@ function calculateScoreForPlayerOffensive(player, heuristicLevel) {
         totalScore += PopCountBoardArray(detectDiagonalDownLeftDeadTwoBitwise(playerBB, opponentBB, emptyBB)) * score_dt2;
     }
 
-    // Dynamic Double Three check
-    let doubleThreeScoreToAdd = PATTERN_SCORES[PT_DOUBLE_THREE].offensive;
-    if (heuristicLevel === 'novice' || heuristicLevel === 'apprentice') {
-        doubleThreeScoreToAdd = 0;
+    // Bitwise Gapped Patterns
+    let score_ljt3 = PATTERN_SCORES[PT_LIVE_JUMP_THREE].offensive;
+    if (heuristicLevel === 'novice') score_ljt3 = 0;
+    else if (heuristicLevel === 'apprentice') score_ljt3 *= 0.2; // Apprentice might see jump threes with reduced value
+    if (score_ljt3 > 0) {
+        totalScore += PopCountBoardArray(detectHorizontalLiveJumpThreeBitwise(playerBB, emptyBB)) * score_ljt3;
+        totalScore += PopCountBoardArray(detectVerticalLiveJumpThreeBitwise(playerBB, emptyBB)) * score_ljt3;
+        totalScore += PopCountBoardArray(detectDiagonalDownRightLiveJumpThreeBitwise(playerBB, emptyBB)) * score_ljt3;
+        totalScore += PopCountBoardArray(detectDiagonalDownLeftLiveJumpThreeBitwise(playerBB, emptyBB)) * score_ljt3;
+    }
+    let score_djt3 = PATTERN_SCORES[PT_DEAD_JUMP_THREE].offensive;
+    if (heuristicLevel === 'novice') score_djt3 = 0;
+    else if (heuristicLevel === 'apprentice') score_djt3 *= 0.2;
+     if (score_djt3 > 0) {
+        totalScore += PopCountBoardArray(detectHorizontalDeadJumpThreeBitwise(playerBB, opponentBB, emptyBB)) * score_djt3;
+        totalScore += PopCountBoardArray(detectVerticalDeadJumpThreeBitwise(playerBB, opponentBB, emptyBB)) * score_djt3;
+        totalScore += PopCountBoardArray(detectDiagonalDownRightDeadJumpThreeBitwise(playerBB, opponentBB, emptyBB)) * score_djt3;
+        totalScore += PopCountBoardArray(detectDiagonalDownLeftDeadJumpThreeBitwise(playerBB, opponentBB, emptyBB)) * score_djt3;
     }
 
+    // Dynamic Double Three check
+    let doubleThreeScoreToAdd = PATTERN_SCORES[PT_DOUBLE_THREE].offensive;
+    if (heuristicLevel === 'novice' || heuristicLevel === 'apprentice') doubleThreeScoreToAdd = 0;
+
     if (doubleThreeScoreToAdd > 0) {
-        const candidateMovesForDoubleThree = getPossibleMoves(); // Use candidate moves
         const staticPatternDirections = [ { dr: 0, dc: 1 }, { dr: 1, dc: 0 }, { dr: 1, dc: 1 }, { dr: 1, dc: -1 } ];
-
-        for (const move of candidateMovesForDoubleThree) {
-            // getPossibleMoves returns {x, y}, but our bitboard functions use (r, c) which is (y, x)
-            const r_empty = move.y;
-            const c_empty = move.x;
-
-            // Ensure the spot is indeed empty (getPossibleMoves should guarantee this, but double check)
-            if (getCellStatus(r_empty, c_empty) === EMPTY) {
-                setCellBit(bitboards[player], r_empty, c_empty);
-                let liveThreesFormedByThisMove = 0;
-                const liveThreeLocations = [];
-                for (const dir of staticPatternDirections) {
-                    const patternInfo = analyzePatternOnLine(r_empty, c_empty, dir.dr, dir.dc, player);
-                    if (patternInfo && patternInfo.type === PT_LIVE_THREE) {
-                        let key_r1 = patternInfo.start_r, key_c1 = patternInfo.start_c, key_r2 = patternInfo.end_r, key_c2 = patternInfo.end_c;
-                        if (patternInfo.start_r > patternInfo.end_r || (patternInfo.start_r === patternInfo.end_r && patternInfo.start_c > patternInfo.end_c)) {
-                            key_r1 = patternInfo.end_r; key_c1 = patternInfo.end_c; key_r2 = patternInfo.start_r; key_c2 = patternInfo.start_c;
-                        }
-                        const liveThreeKey = `${key_r1},${key_c1}:${key_r2},${key_c2}`;
-                        if (!liveThreeLocations.includes(liveThreeKey)) {
-                            liveThreesFormedByThisMove++;
-                            liveThreeLocations.push(liveThreeKey);
+        for (let r_empty = 0; r_empty < BOARD_SIZE; r_empty++) {
+            for (let c_empty = 0; c_empty < BOARD_SIZE; c_empty++) {
+                if (getCellStatus(r_empty, c_empty) === EMPTY) {
+                    setCellBit(bitboards[player], r_empty, c_empty);
+                    let liveThreesFormedByThisMove = 0; const liveThreeLocations = [];
+                    for (const dir of staticPatternDirections) {
+                        const patternInfo = analyzePatternOnLine(r_empty, c_empty, dir.dr, dir.dc, player);
+                        if (patternInfo && patternInfo.type === PT_LIVE_THREE) {
+                            let key_r1 = patternInfo.start_r, key_c1 = patternInfo.start_c, key_r2 = patternInfo.end_r, key_c2 = patternInfo.end_c;
+                            if (patternInfo.start_r > patternInfo.end_r || (patternInfo.start_r === patternInfo.end_r && patternInfo.start_c > patternInfo.end_c)) {
+                                key_r1 = patternInfo.end_r; key_c1 = patternInfo.end_c; key_r2 = patternInfo.start_r; key_c2 = patternInfo.start_c;
+                            }
+                            const liveThreeKey = `${key_r1},${key_c1}:${key_r2},${key_c2}`;
+                            if (!liveThreeLocations.includes(liveThreeKey)) { liveThreesFormedByThisMove++; liveThreeLocations.push(liveThreeKey); }
                         }
                     }
-                }
-                clearCellBit(bitboards[player], r_empty, c_empty);
-                if (liveThreesFormedByThisMove >= 2) {
-                    totalScore += doubleThreeScoreToAdd;
-                    // Optimization: In some heuristics, finding one double-three is enough.
-                    // Here, we sum all such opportunities found among candidate moves.
+                    clearCellBit(bitboards[player], r_empty, c_empty);
+                    if (liveThreesFormedByThisMove >= 2) {
+                        totalScore += doubleThreeScoreToAdd;
+                    }
                 }
             }
         }
@@ -736,99 +835,109 @@ function checkWinForPlayer(player) {
 
 // scoreMoveHeuristically using global bitboards
 function scoreMoveHeuristically(r_move, c_move, player) {
-    let heuristicScore = 0;
     const opponent = (player === PLAYER_BLACK) ? PLAYER_WHITE : PLAYER_BLACK;
+    const directions = [ { dr: 0, dc: 1 }, { dr: 1, dc: 0 }, { dr: 1, dc: 1 }, { dr: 1, dc: -1 } ];
 
-    // Backup global bitboards for player and opponent as this function modifies them
-    const originalPlayerBB_Self = bitboards[player].map(b => b);
-    const originalOpponentBB_Self = bitboards[opponent].map(b => b);
+    let heuristicScore = 0;
 
+    // 1. Evaluate AI's move (player)
     setCellBit(bitboards[player], r_move, c_move);
     if (checkWinForPlayer(player)) {
-        bitboards[player] = originalPlayerBB_Self;
-        bitboards[opponent] = originalOpponentBB_Self;
+        clearCellBit(bitboards[player], r_move, c_move);
         return PATTERN_SCORES[PT_FIVE].offensive * 10;
     }
 
     let offensiveScore = 0;
-    const tempEmptyBB_off = computeEmptyCellsBitboard();
-    // For scoreMoveHeuristically, we primarily care about immediate strong threats.
-    // Using full bitwise detection for all patterns might be too slow here.
-    // Let's use Fours as the main bitwise check for offensive threats created.
-    offensiveScore += PopCountBoardArray(detectHorizontalLiveFourBitwise(bitboards[player], tempEmptyBB_off)) * PATTERN_SCORES[PT_LIVE_FOUR].offensive;
-    offensiveScore += PopCountBoardArray(detectVerticalLiveFourBitwise(bitboards[player], tempEmptyBB_off)) * PATTERN_SCORES[PT_LIVE_FOUR].offensive;
-    offensiveScore += PopCountBoardArray(detectDiagonalDownRightLiveFourBitwise(bitboards[player], tempEmptyBB_off)) * PATTERN_SCORES[PT_LIVE_FOUR].offensive;
-    offensiveScore += PopCountBoardArray(detectDiagonalDownLeftLiveFourBitwise(bitboards[player], tempEmptyBB_off)) * PATTERN_SCORES[PT_LIVE_FOUR].offensive;
-    // Add Dead Fours created
-    offensiveScore += PopCountBoardArray(detectHorizontalDeadFourBitwise(bitboards[player], bitboards[opponent], tempEmptyBB_off)) * PATTERN_SCORES[PT_DEAD_FOUR].offensive;
-    offensiveScore += PopCountBoardArray(detectVerticalDeadFourBitwise(bitboards[player], bitboards[opponent], tempEmptyBB_off)) * PATTERN_SCORES[PT_DEAD_FOUR].offensive;
-    offensiveScore += PopCountBoardArray(detectDiagonalDownRightDeadFourBitwise(bitboards[player], bitboards[opponent], tempEmptyBB_off)) * PATTERN_SCORES[PT_DEAD_FOUR].offensive;
-    offensiveScore += PopCountBoardArray(detectDiagonalDownLeftDeadFourBitwise(bitboards[player], bitboards[opponent], tempEmptyBB_off)) * PATTERN_SCORES[PT_DEAD_FOUR].offensive;
-    // Add Live Threes created
-    offensiveScore += PopCountBoardArray(detectHorizontalLiveThreeBitwise(bitboards[player], tempEmptyBB_off)) * PATTERN_SCORES[PT_LIVE_THREE].offensive;
-    offensiveScore += PopCountBoardArray(detectVerticalLiveThreeBitwise(bitboards[player], tempEmptyBB_off)) * PATTERN_SCORES[PT_LIVE_THREE].offensive;
-    offensiveScore += PopCountBoardArray(detectDiagonalDownRightLiveThreeBitwise(bitboards[player], tempEmptyBB_off)) * PATTERN_SCORES[PT_LIVE_THREE].offensive;
-    offensiveScore += PopCountBoardArray(detectDiagonalDownLeftLiveThreeBitwise(bitboards[player], tempEmptyBB_off)) * PATTERN_SCORES[PT_LIVE_THREE].offensive;
+    const emptyBB_after_player_move = computeEmptyCellsBitboard();
+    offensiveScore += PopCountBoardArray(detectHorizontalLiveFourBitwise(bitboards[player], emptyBB_after_player_move)) * PATTERN_SCORES[PT_LIVE_FOUR].offensive;
+    offensiveScore += PopCountBoardArray(detectVerticalLiveFourBitwise(bitboards[player], emptyBB_after_player_move)) * PATTERN_SCORES[PT_LIVE_FOUR].offensive;
+    offensiveScore += PopCountBoardArray(detectDiagonalDownRightLiveFourBitwise(bitboards[player], emptyBB_after_player_move)) * PATTERN_SCORES[PT_LIVE_FOUR].offensive;
+    offensiveScore += PopCountBoardArray(detectDiagonalDownLeftLiveFourBitwise(bitboards[player], emptyBB_after_player_move)) * PATTERN_SCORES[PT_LIVE_FOUR].offensive;
+
+    offensiveScore += PopCountBoardArray(detectHorizontalDeadFourBitwise(bitboards[player], bitboards[opponent], emptyBB_after_player_move)) * PATTERN_SCORES[PT_DEAD_FOUR].offensive;
+    offensiveScore += PopCountBoardArray(detectVerticalDeadFourBitwise(bitboards[player], bitboards[opponent], emptyBB_after_player_move)) * PATTERN_SCORES[PT_DEAD_FOUR].offensive;
+    offensiveScore += PopCountBoardArray(detectDiagonalDownRightDeadFourBitwise(bitboards[player], bitboards[opponent], emptyBB_after_player_move)) * PATTERN_SCORES[PT_DEAD_FOUR].offensive;
+    offensiveScore += PopCountBoardArray(detectDiagonalDownLeftDeadFourBitwise(bitboards[player], bitboards[opponent], emptyBB_after_player_move)) * PATTERN_SCORES[PT_DEAD_FOUR].offensive;
+
+    offensiveScore += PopCountBoardArray(detectHorizontalLiveThreeBitwise(bitboards[player], emptyBB_after_player_move)) * PATTERN_SCORES[PT_LIVE_THREE].offensive;
+    offensiveScore += PopCountBoardArray(detectVerticalLiveThreeBitwise(bitboards[player], emptyBB_after_player_move)) * PATTERN_SCORES[PT_LIVE_THREE].offensive;
+    offensiveScore += PopCountBoardArray(detectDiagonalDownRightLiveThreeBitwise(bitboards[player], emptyBB_after_player_move)) * PATTERN_SCORES[PT_LIVE_THREE].offensive;
+    offensiveScore += PopCountBoardArray(detectDiagonalDownLeftLiveThreeBitwise(bitboards[player], emptyBB_after_player_move)) * PATTERN_SCORES[PT_LIVE_THREE].offensive;
+
+    offensiveScore += PopCountBoardArray(detectHorizontalLiveJumpThreeBitwise(bitboards[player], emptyBB_after_player_move)) * PATTERN_SCORES[PT_LIVE_JUMP_THREE].offensive;
+    offensiveScore += PopCountBoardArray(detectVerticalLiveJumpThreeBitwise(bitboards[player], emptyBB_after_player_move)) * PATTERN_SCORES[PT_LIVE_JUMP_THREE].offensive;
+    offensiveScore += PopCountBoardArray(detectDiagonalDownRightLiveJumpThreeBitwise(bitboards[player], emptyBB_after_player_move)) * PATTERN_SCORES[PT_LIVE_JUMP_THREE].offensive;
+    offensiveScore += PopCountBoardArray(detectDiagonalDownLeftLiveJumpThreeBitwise(bitboards[player], emptyBB_after_player_move)) * PATTERN_SCORES[PT_LIVE_JUMP_THREE].offensive;
+    // Add DeadJumpThrees to offensive score
+    offensiveScore += PopCountBoardArray(detectHorizontalDeadJumpThreeBitwise(bitboards[player], bitboards[opponent], emptyBB_after_player_move)) * PATTERN_SCORES[PT_DEAD_JUMP_THREE].offensive;
+    offensiveScore += PopCountBoardArray(detectVerticalDeadJumpThreeBitwise(bitboards[player], bitboards[opponent], emptyBB_after_player_move)) * PATTERN_SCORES[PT_DEAD_JUMP_THREE].offensive;
+    offensiveScore += PopCountBoardArray(detectDiagonalDownRightDeadJumpThreeBitwise(bitboards[player], bitboards[opponent], emptyBB_after_player_move)) * PATTERN_SCORES[PT_DEAD_JUMP_THREE].offensive;
+    offensiveScore += PopCountBoardArray(detectDiagonalDownLeftDeadJumpThreeBitwise(bitboards[player], bitboards[opponent], emptyBB_after_player_move)) * PATTERN_SCORES[PT_DEAD_JUMP_THREE].offensive;
 
 
-    // Double Three check for player's move (iterative is fine for this local check)
-    const directions = [ { dr: 0, dc: 1 }, { dr: 1, dc: 0 }, { dr: 1, dc: 1 }, { dr: 1, dc: -1 } ];
-    let liveThreesFormedCount = 0; const liveThreeKeysPlayer = new Set();
+    let liveThreesFormedCount = 0;
     for (const dir of directions) {
         const patternInfo = analyzePatternOnLine(r_move, c_move, dir.dr, dir.dc, player);
-        if (patternInfo && patternInfo.type === PT_LIVE_THREE) {
-            let key_r1 = patternInfo.start_r, key_c1 = patternInfo.start_c, key_r2 = patternInfo.end_r, key_c2 = patternInfo.end_c;
-             if (patternInfo.start_r > patternInfo.end_r || (patternInfo.start_r === patternInfo.end_r && patternInfo.start_c > patternInfo.end_c)) {
-                key_r1 = patternInfo.end_r; key_c1 = patternInfo.end_c; key_r2 = patternInfo.start_r; key_c2 = patternInfo.start_c;
-            }
-            const ltKey = `player:${key_r1},${key_c1}:${key_r2},${key_c2}`;
-            if (!liveThreeKeysPlayer.has(ltKey)) { liveThreesFormedCount++; liveThreeKeysPlayer.add(ltKey); }
-        }
+        if (patternInfo && patternInfo.type === PT_LIVE_THREE) liveThreesFormedCount++;
     }
     if (liveThreesFormedCount >= 2) offensiveScore += PATTERN_SCORES[PT_DOUBLE_THREE].offensive;
 
-    bitboards[player] = originalPlayerBB_Self.map(b=>b);
+    clearCellBit(bitboards[player], r_move, c_move);
 
     setCellBit(bitboards[opponent], r_move, c_move);
     let defensiveScore = 0;
-    if (checkWinForPlayer(opponent)) {
-        bitboards[opponent] = originalOpponentBB_Self.map(b=>b);
+    let opponentWinsIfPlaysHere = false;
+    for (const dir of directions) {
+        const patternInfo = analyzePatternOnLine(r_move, c_move, dir.dr, dir.dc, opponent);
+        if (patternInfo && patternInfo.type === PT_FIVE) { opponentWinsIfPlaysHere = true; break; }
+    }
+    if (!opponentWinsIfPlaysHere) opponentWinsIfPlaysHere = checkWinForPlayer(opponent);
+
+    if (opponentWinsIfPlaysHere) {
+        clearCellBit(bitboards[opponent], r_move, c_move);
         return PATTERN_SCORES[PT_FIVE].defensive * 9;
     }
-    const tempEmptyBB_def = computeEmptyCellsBitboard();
-    // Check strong threats by opponent that are blocked
-    defensiveScore += PopCountBoardArray(detectHorizontalLiveFourBitwise(bitboards[opponent], tempEmptyBB_def)) * PATTERN_SCORES[PT_LIVE_FOUR].defensive;
-    defensiveScore += PopCountBoardArray(detectVerticalLiveFourBitwise(bitboards[opponent], tempEmptyBB_def)) * PATTERN_SCORES[PT_LIVE_FOUR].defensive;
-    // ... (add other directions for Fours, and Threes for defensive score) ...
-    defensiveScore += PopCountBoardArray(detectHorizontalDeadFourBitwise(bitboards[opponent], bitboards[player], tempEmptyBB_def)) * PATTERN_SCORES[PT_DEAD_FOUR].defensive; // Opponent is player, current player is opponent
-    defensiveScore += PopCountBoardArray(detectVerticalDeadFourBitwise(bitboards[opponent], bitboards[player], tempEmptyBB_def)) * PATTERN_SCORES[PT_DEAD_FOUR].defensive;
 
-    defensiveScore += PopCountBoardArray(detectHorizontalLiveThreeBitwise(bitboards[opponent], tempEmptyBB_def)) * PATTERN_SCORES[PT_LIVE_THREE].defensive;
-    defensiveScore += PopCountBoardArray(detectVerticalLiveThreeBitwise(bitboards[opponent], tempEmptyBB_def)) * PATTERN_SCORES[PT_LIVE_THREE].defensive;
+    const emptyBB_after_opponent_move = computeEmptyCellsBitboard();
+    defensiveScore += PopCountBoardArray(detectHorizontalLiveFourBitwise(bitboards[opponent], emptyBB_after_opponent_move)) * PATTERN_SCORES[PT_LIVE_FOUR].defensive;
+    defensiveScore += PopCountBoardArray(detectVerticalLiveFourBitwise(bitboards[opponent], emptyBB_after_opponent_move)) * PATTERN_SCORES[PT_LIVE_FOUR].defensive;
+    defensiveScore += PopCountBoardArray(detectDiagonalDownRightLiveFourBitwise(bitboards[opponent], emptyBB_after_opponent_move)) * PATTERN_SCORES[PT_LIVE_FOUR].defensive;
+    defensiveScore += PopCountBoardArray(detectDiagonalDownLeftLiveFourBitwise(bitboards[opponent], emptyBB_after_opponent_move)) * PATTERN_SCORES[PT_LIVE_FOUR].defensive;
+
+    defensiveScore += PopCountBoardArray(detectHorizontalDeadFourBitwise(bitboards[opponent], bitboards[player], emptyBB_after_opponent_move)) * PATTERN_SCORES[PT_DEAD_FOUR].defensive;
+    defensiveScore += PopCountBoardArray(detectVerticalDeadFourBitwise(bitboards[opponent], bitboards[player], emptyBB_after_opponent_move)) * PATTERN_SCORES[PT_DEAD_FOUR].defensive;
+    defensiveScore += PopCountBoardArray(detectDiagonalDownRightDeadFourBitwise(bitboards[opponent], bitboards[player], emptyBB_after_opponent_move)) * PATTERN_SCORES[PT_DEAD_FOUR].defensive;
+    defensiveScore += PopCountBoardArray(detectDiagonalDownLeftDeadFourBitwise(bitboards[opponent], bitboards[player], emptyBB_after_opponent_move)) * PATTERN_SCORES[PT_DEAD_FOUR].defensive;
+
+    defensiveScore += PopCountBoardArray(detectHorizontalLiveThreeBitwise(bitboards[opponent], emptyBB_after_opponent_move)) * PATTERN_SCORES[PT_LIVE_THREE].defensive;
+    defensiveScore += PopCountBoardArray(detectVerticalLiveThreeBitwise(bitboards[opponent], emptyBB_after_opponent_move)) * PATTERN_SCORES[PT_LIVE_THREE].defensive;
+    defensiveScore += PopCountBoardArray(detectDiagonalDownRightLiveThreeBitwise(bitboards[opponent], emptyBB_after_opponent_move)) * PATTERN_SCORES[PT_LIVE_THREE].defensive;
+    defensiveScore += PopCountBoardArray(detectDiagonalDownLeftLiveThreeBitwise(bitboards[opponent], emptyBB_after_opponent_move)) * PATTERN_SCORES[PT_LIVE_THREE].defensive;
+
+    defensiveScore += PopCountBoardArray(detectHorizontalLiveJumpThreeBitwise(bitboards[opponent], emptyBB_after_opponent_move)) * PATTERN_SCORES[PT_LIVE_JUMP_THREE].defensive;
+    defensiveScore += PopCountBoardArray(detectVerticalLiveJumpThreeBitwise(bitboards[opponent], emptyBB_after_opponent_move)) * PATTERN_SCORES[PT_LIVE_JUMP_THREE].defensive;
+    defensiveScore += PopCountBoardArray(detectDiagonalDownRightLiveJumpThreeBitwise(bitboards[opponent], emptyBB_after_opponent_move)) * PATTERN_SCORES[PT_LIVE_JUMP_THREE].defensive;
+    defensiveScore += PopCountBoardArray(detectDiagonalDownLeftLiveJumpThreeBitwise(bitboards[opponent], emptyBB_after_opponent_move)) * PATTERN_SCORES[PT_LIVE_JUMP_THREE].defensive;
+
+    defensiveScore += PopCountBoardArray(detectHorizontalDeadJumpThreeBitwise(bitboards[opponent], bitboards[player], emptyBB_after_opponent_move)) * PATTERN_SCORES[PT_DEAD_JUMP_THREE].defensive;
+    defensiveScore += PopCountBoardArray(detectVerticalDeadJumpThreeBitwise(bitboards[opponent], bitboards[player], emptyBB_after_opponent_move)) * PATTERN_SCORES[PT_DEAD_JUMP_THREE].defensive;
+    defensiveScore += PopCountBoardArray(detectDiagonalDownRightDeadJumpThreeBitwise(bitboards[opponent], bitboards[player], emptyBB_after_opponent_move)) * PATTERN_SCORES[PT_DEAD_JUMP_THREE].defensive;
+    defensiveScore += PopCountBoardArray(detectDiagonalDownLeftDeadJumpThreeBitwise(bitboards[opponent], bitboards[player], emptyBB_after_opponent_move)) * PATTERN_SCORES[PT_DEAD_JUMP_THREE].defensive;
 
 
-    // Double Three check for opponent's potential move
-    let oppLiveThreesFormedCount = 0; const liveThreeKeysOpp = new Set();
-     for (const dir of directions) {
+    let oppLiveThreesFormedCount = 0;
+    for (const dir of directions) {
         const patternInfo = analyzePatternOnLine(r_move, c_move, dir.dr, dir.dc, opponent);
-        if (patternInfo && patternInfo.type === PT_LIVE_THREE) {
-            let key_r1 = patternInfo.start_r, key_c1 = patternInfo.start_c, key_r2 = patternInfo.end_r, key_c2 = patternInfo.end_c;
-            if (patternInfo.start_r > patternInfo.end_r || (patternInfo.start_r === patternInfo.end_r && patternInfo.start_c > patternInfo.end_c)) {
-                key_r1 = patternInfo.end_r; key_c1 = patternInfo.end_c; key_r2 = patternInfo.start_r; key_c2 = patternInfo.start_c;
-            }
-            const ltKey = `opp:${key_r1},${key_c1}:${key_r2},${key_c2}`;
-            if (!liveThreeKeysOpp.has(ltKey)) { oppLiveThreesFormedCount++; liveThreeKeysOpp.add(ltKey); }
-        }
+        if (patternInfo && patternInfo.type === PT_LIVE_THREE) oppLiveThreesFormedCount++;
     }
     if (oppLiveThreesFormedCount >= 2) defensiveScore += PATTERN_SCORES[PT_DOUBLE_THREE].defensive;
 
-    bitboards[opponent] = originalOpponentBB_Self.map(b=>b);
+    clearCellBit(bitboards[opponent], r_move, c_move);
 
     heuristicScore = offensiveScore + defensiveScore;
     for (let dr_adj = -1; dr_adj <= 1; dr_adj++) {
         for (let dc_adj = -1; dc_adj <= 1; dc_adj++) {
             if (dr_adj === 0 && dc_adj === 0) continue;
-            // Read from original state (which is current global state now)
             if (getCellStatus(r_move + dr_adj, c_move + dc_adj) !== EMPTY && getCellStatus(r_move + dr_adj, c_move + dc_adj) !== 'EDGE') {
                 heuristicScore += 0.5;
             }
@@ -871,7 +980,7 @@ function getPossibleMoves() {
 function evaluateBoard(aiPlayer = PLAYER_WHITE, heuristicLevel) {
     const humanPlayer = (aiPlayer === PLAYER_BLACK) ? PLAYER_WHITE : PLAYER_BLACK;
     const aiOffensiveScore = calculateScoreForPlayerOffensive(aiPlayer, heuristicLevel);
-    const humanOffensiveScore = calculateScoreForPlayerOffensive(humanPlayer, heuristicLevel);
+    const humanOffensiveScore = calculateScoreForPlayerOffensive(humanPlayer, 'master');
     const fiveScore = PATTERN_SCORES[PT_FIVE].offensive;
     if (calculateScoreForPlayerOffensive(aiPlayer, 'master') >= fiveScore) return fiveScore * 10;
     if (calculateScoreForPlayerOffensive(humanPlayer, 'master') >= fiveScore) return -fiveScore * 10;
@@ -919,7 +1028,6 @@ function findBestMove(currentSearchDepth, heuristicLevel, alpha, beta, maximizin
         const scoredSortedMoves = movesToScoreSort.map(move => {
             let score;
             if (getCellStatus(move.y, move.x) === EMPTY) {
-                // scoreMoveHeuristically modifies global bitboards, this is intended for its simulation
                 score = scoreMoveHeuristically(move.y, move.x, currentPlayerForSort);
             } else {
                 score = -Infinity;
