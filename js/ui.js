@@ -17,9 +17,9 @@ let currentCellSize = 30; // Default, will be recalculated
 let currentStoneRadius = currentCellSize / 2 * 0.85; // Default
 let currentBoardDim = currentCellSize * BOARD_SIZE; // Default
 
-// Omniscience Mode Visuals (dependent on currentCellSize)
-let isOmniscienceModeActive = false;
-let omniHints = []; // Stores {x, y, score: number, type: string}
+// Assist Mode (formerly Omniscience Mode) Visuals
+let isAssistModeActive = false; // Changed from isOmniscienceModeActive
+let assistHints = []; // Changed from omniHints, Stores {x, y, patternType, hintCategory}
 
 // Local approximation of pattern scores for UI decisions if not directly accessible
 const localPatternScoreRefs = {
@@ -145,13 +145,13 @@ function drawGameInternal() {
     drawBoardGridInternal();
     drawStonesInternal(board);
 
-    // Omniscience Mode: Call to calculate if active, or draw existing hints
-    // calculateAndDrawOmniHintsInternal is now async and handles its own drawing upon completion
-    if (isOmniscienceModeActive) {
+    // Assist Mode: Call to calculate if active, or draw existing hints
+    // calculateAndDrawAssistHintsInternal is now async and handles its own drawing upon completion
+    if (isAssistModeActive) { // Changed from isOmniscienceModeActive
         // If hints are already populated (e.g. by toggle or previous calculation), draw them.
-        // The main calculation is triggered by toggleOmniscienceModeInternal.
+        // The main calculation is triggered by toggleAssistModeInternal.
         // This ensures hints persist during simple redraws not involving state change for hints.
-        drawOmniHintsInternal();
+        drawAssistHintsInternal(); // Changed from drawOmniHintsInternal
     }
     
     updateGameMessageInternal(currentPlayer, gameState);
@@ -352,9 +352,17 @@ function handleBoardClickInternal(event) {
         return;
     }
 
-    if (!window.gameApi || !window.gameApi.getGameState || window.gameApi.getGameState() !== GAME_STATE_PLAYING) return;
-    if (window.gameApi.getCurrentPlayer() !== PLAYER_BLACK) {
-        console.log("UI: Not human player's turn.");
+    if (!window.gameApi || !window.gameApi.getGameState || !window.gameApi.getHumanPlayer || !window.gameApi.getCurrentPlayer) {
+        console.warn("UI: Game API not fully available for click handling.");
+        return;
+    }
+    if (window.gameApi.getGameState() !== GAME_STATE_PLAYING) {
+        console.log("UI: Click ignored, game not in PLAYING state.");
+        return;
+    }
+    // Check if it's the human player's turn, regardless of their chosen color.
+    if (window.gameApi.getCurrentPlayer() !== window.gameApi.getHumanPlayer()) {
+        console.log(`UI: Not human player's turn. Current: ${window.gameApi.getCurrentPlayer()}, Human: ${window.gameApi.getHumanPlayer()}`);
         return;
     }
     
@@ -399,74 +407,76 @@ function updateGameMessageInternal(currentPlayer, gameState) {
     messageEl.textContent = message;
 }
 
-// --- Omniscience Mode UI ---
-function toggleOmniscienceModeInternal(isActive) {
-    isOmniscienceModeActive = isActive;
-    console.log(`UI: Omniscience Mode toggled to ${isOmniscienceModeActive}`);
+// --- Assist Mode UI (formerly Omniscience Mode) ---
+function toggleAssistModeInternal(isActive) { // Renamed from toggleOmniscienceModeInternal
+    isAssistModeActive = isActive; // Changed from isOmniscienceModeActive
+    console.log(`UI: Assist Mode toggled to ${isAssistModeActive}`);
 
-    if (isOmniscienceModeActive) {
+    if (isAssistModeActive) {
+        if (!window.gameApi || !window.gameApi.getBoard || !window.gameApi.getGameState || !window.gameApi.getCurrentPlayer || !window.gameApi.getHumanPlayer) {
+            console.warn("UI: Game API not fully available for Assist Mode.");
+            assistHints = [];
+            drawGameInternal();
+            return;
+        }
         const board = window.gameApi.getBoard();
         const gameState = window.gameApi.getGameState();
         const currentPlayer = window.gameApi.getCurrentPlayer();
-        // Only calculate hints if game is playing and it's human's turn (PLAYER_BLACK)
-        if (gameState === GAME_STATE_PLAYING && currentPlayer === PLAYER_BLACK) {
-            calculateAndDrawOmniHintsInternal(board); // This is async now
+        const humanPlayer = window.gameApi.getHumanPlayer();
+
+        // Only calculate hints if game is playing and it's human's turn
+        if (gameState === GAME_STATE_PLAYING && currentPlayer === humanPlayer) {
+            calculateAndDrawAssistHintsInternal(board); // Renamed, was calculateAndDrawOmniHintsInternal
         } else {
-            omniHints = [];
+            assistHints = []; // Changed from omniHints
             drawGameInternal(); // Redraw to clear any existing hints
         }
     } else {
-        omniHints = []; // Clear hints when turning off
+        assistHints = []; // Clear hints when turning off
         drawGameInternal(); // Redraw to remove hints
     }
 }
 
-function calculateAndDrawOmniHintsInternal(board) {
-    if (!isOmniscienceModeActive || !ctx || !window.aiApi || !window.aiApi.evaluateAllPointsForOmniscience) {
-        omniHints = [];
-        drawOmniHintsInternal();
+function calculateAndDrawAssistHintsInternal(board) { // Renamed from calculateAndDrawOmniHintsInternal
+    if (!isAssistModeActive || !ctx || !window.aiApi || !window.aiApi.evaluateAllPointsForOmniscience || !window.gameApi.getHumanPlayer) {
+        assistHints = [];
+        drawAssistHintsInternal(); // Renamed
         return;
     }
 
-    // Omniscience hints are always from the perspective of the human player (PLAYER_BLACK)
-    const playerForOmniscience = PLAYER_BLACK;
+    // Assist hints are always from the perspective of the current human player
+    const playerForAssist = window.gameApi.getHumanPlayer();
 
-    console.log("UI: Requesting Omniscience hints from AI (perspective: PLAYER_BLACK).");
-    omniHints = []; // Clear old hints immediately, a loading state could be set here
-    // messageEl.textContent = "全知模式：计算提示中..."; // Example loading message
+    console.log(`UI: Requesting Assist hints from AI (perspective: Player ${playerForAssist}).`);
+    assistHints = []; // Clear old hints immediately
+    // messageEl.textContent = "辅助模式：计算提示中..."; // Example loading message
 
-    window.aiApi.evaluateAllPointsForOmniscience(board, playerForOmniscience)
+    // evaluateAllPointsForOmniscience is the AI function, its name doesn't need to change yet
+    window.aiApi.evaluateAllPointsForOmniscience(board, playerForAssist)
         .then(evaluatedHints => {
-            console.log("UI: Received omniscience hints:", evaluatedHints);
-            if (!isOmniscienceModeActive) return; // Mode might have been turned off
+            console.log("UI: Received assist hints:", evaluatedHints);
+            if (!isAssistModeActive) return; // Mode might have been turned off
 
-            // Hints are now directly in the format {x, y, patternType, hintCategory}
-            // No need to process score or old types like 'critical' or 'strong_suggestion'.
-            // Also, no need to slice to top 5, we want all relevant markers.
-            omniHints = evaluatedHints;
+            assistHints = evaluatedHints;
 
-            // Restore game message or indicate hints are ready
-            // updateGameMessageInternal(window.gameApi.getCurrentPlayer(), window.gameApi.getGameState());
-            console.log(`UI: Received ${omniHints.length} hints for drawing from AI.`);
+            console.log(`UI: Received ${assistHints.length} hints for drawing from AI.`);
             drawGameInternal(); // Redraw with new hints
         })
         .catch(error => {
-            console.error("UI: Error getting omniscience hints:", error);
-            omniHints = [];
-            // updateGameMessageInternal(window.gameApi.getCurrentPlayer(), window.gameApi.getGameState());
-            // messageEl.textContent += " (提示获取失败)";
+            console.error("UI: Error getting assist hints:", error);
+            assistHints = [];
+            // messageEl.textContent += " (辅助提示获取失败)";
             drawGameInternal();
         });
 }
 
-function drawOmniHintsInternal() {
-    if (!ctx || !omniHints || omniHints.length === 0) {
-        // console.log("UI: No omni hints to draw or context not ready.");
+function drawAssistHintsInternal() { // Renamed from drawOmniHintsInternal
+    if (!ctx || !assistHints || assistHints.length === 0) { // Changed from omniHints
         return;
     }
-    console.log("UI: Drawing omniscience hints:", omniHints.length);
+    console.log("UI: Drawing assist hints:", assistHints.length);
 
-    omniHints.forEach(hint => {
+    assistHints.forEach(hint => { // Changed from omniHints
         const canvasX = currentCellSize / 2 + hint.x * currentCellSize;
         const canvasY = currentCellSize / 2 + hint.y * currentCellSize;
         const markerRadius = currentStoneRadius * 0.5; // Smaller than a stone
@@ -521,25 +531,28 @@ function showSmartUndoModalInternal(onConfirmCallback, onUndoCallback) {
 window.uiApi = {
     initUI: initUIInternal,
     drawGame: drawGameInternal,
-    toggleOmniscienceMode: toggleOmniscienceModeInternal,
+    toggleAssistMode: toggleAssistModeInternal, // Renamed from toggleOmniscienceMode
     showSmartUndoModal: showSmartUndoModalInternal,
     showGameMessageModal: showMessageModalInternal,
-    triggerOmniscienceUpdateIfActive: function() { // Expose the trigger function
-        if (isOmniscienceModeActive) {
+    triggerAssistModeUpdateIfActive: function() { // Renamed from triggerOmniscienceUpdateIfActive
+        if (isAssistModeActive) { // Changed from isOmniscienceModeActive
+            if (!window.gameApi || !window.gameApi.getBoard || !window.gameApi.getGameState) {
+                console.warn("UI: Game API not fully available for Assist Mode trigger.");
+                return;
+            }
             const board = window.gameApi.getBoard();
             const gameState = window.gameApi.getGameState();
-        // Hints should update if mode is active and game is playing, regardless of whose turn it is.
-        // The perspective for hints is always for the human player (PLAYER_BLACK).
-        if (gameState === GAME_STATE_PLAYING) {
-                console.log("UI: Externally triggered omniscience update.");
-            // Pass the board, calculateAndDrawOmniHintsInternal will handle using PLAYER_BLACK perspective
-            calculateAndDrawOmniHintsInternal(board);
+            // Hints should update if mode is active and game is playing.
+            // calculateAndDrawAssistHintsInternal will use the current humanPlayer perspective.
+            if (gameState === GAME_STATE_PLAYING) {
+                console.log("UI: Externally triggered Assist Mode update.");
+                calculateAndDrawAssistHintsInternal(board); // Renamed
             }
         }
     }
 };
 
-console.log("ui.js loaded and API exposed via window.uiApi. Responsive canvas enabled.");
+console.log("ui.js loaded and API exposed via window.uiApi. Assist Mode logic updated. Responsive canvas enabled.");
 
 if (typeof getCanvasRelativePos !== 'function' || typeof isInBounds !== 'function' || typeof PLAYER_BLACK === 'undefined' || typeof GAME_STATE_IDLE === 'undefined') {
     console.error("UI Error: Critical functions or constants from utils.js might not be loaded or available.");
