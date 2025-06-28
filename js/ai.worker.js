@@ -281,26 +281,15 @@ function detectHorizontalFourBitwise(playerBB) {
 function computeEmptyCellsBitboard() {
     const emptyBB = Array(NUM_BITBOARDS_PER_PLAYER).fill(BigInt(0));
     const occupiedBB = Array(NUM_BITBOARDS_PER_PLAYER).fill(BigInt(0));
-
-    // Combine player bitboards to get all occupied cells
     for (let i = 0; i < NUM_BITBOARDS_PER_PLAYER; i++) {
         occupiedBB[i] = bitboards[PLAYER_BLACK][i] | bitboards[PLAYER_WHITE][i];
     }
-
-    // Create a mask for all valid board positions
     const fullBoardMask = Array(NUM_BITBOARDS_PER_PLAYER).fill(BigInt(0));
     for (let r = 0; r < BOARD_SIZE; r++) {
         for (let c = 0; c < BOARD_SIZE; c++) {
-            // Use the existing setCellBit which correctly targets playerBitboardArray
-            // To use it for fullBoardMask, we pass fullBoardMask as the first argument.
-            // This implies setCellBit should be generic, or we need a variant.
-            // Let's assume setCellBit(maskArray, r, c) works by modifying maskArray.
-            // The current setCellBit is: setCellBit(playerBitboardArray, r, c)
-            // So this is fine if fullBoardMask is structured like a playerBitboardArray.
             setCellBit(fullBoardMask, r, c);
         }
     }
-
     for (let i = 0; i < NUM_BITBOARDS_PER_PLAYER; i++) {
         emptyBB[i] = (~occupiedBB[i]) & fullBoardMask[i];
     }
@@ -411,8 +400,184 @@ function detectDiagonalDownLeftDeadFourBitwise(playerBB, opponentBB, emptyBB) {
     return BitwiseORBoardArrays(df1,df2);
 }
 
+// --- Bitwise Pattern Detection for Threes ---
+function detectHorizontalThreeBitwise(playerBB) {
+    let t = playerBB.map(b=>b); let s;
+    s = shiftBoardHorizontalRight(playerBB, 1); t = BitwiseANDBoardArrays(t, s);
+    s = shiftBoardHorizontalRight(playerBB, 2); t = BitwiseANDBoardArrays(t, s);
+    return t;
+}
+function detectHorizontalLiveThreeBitwise(playerBB, emptyBB) {
+    const p_bb = playerBB; const e_bb = emptyBB;
+    let P0=p_bb, P1=shiftBoardHorizontalLeft(p_bb,1), P2=shiftBoardHorizontalLeft(p_bb,2);
+    let E_neg1 = shiftBoardHorizontalRight(e_bb, 1);
+    let E_pos3 = shiftBoardHorizontalLeft(e_bb, 3);
+    let lt = BitwiseANDBoardArrays(E_neg1, P0); lt = BitwiseANDBoardArrays(lt, P1); lt = BitwiseANDBoardArrays(lt, P2); lt = BitwiseANDBoardArrays(lt, E_pos3);
+    return lt;
+}
+function detectHorizontalDeadThreeBitwise(playerBB, opponentBB, emptyBB) {
+    const p_bb=playerBB, o_bb=opponentBB, e_bb=emptyBB;
+    let P0=p_bb, P1=shiftBoardHorizontalLeft(p_bb,1), P2=shiftBoardHorizontalLeft(p_bb,2);
+    let O_neg1=shiftBoardHorizontalRight(o_bb,1), E_pos3=shiftBoardHorizontalLeft(e_bb,3);
+    let dt1=BitwiseANDBoardArrays(O_neg1,P0); dt1=BitwiseANDBoardArrays(dt1,P1); dt1=BitwiseANDBoardArrays(dt1,P2); dt1=BitwiseANDBoardArrays(dt1,E_pos3);
+    let E_neg1=shiftBoardHorizontalRight(e_bb,1), O_pos3=shiftBoardHorizontalLeft(o_bb,3);
+    let dt2=BitwiseANDBoardArrays(E_neg1,P0); dt2=BitwiseANDBoardArrays(dt2,P1); dt2=BitwiseANDBoardArrays(dt2,P2); dt2=BitwiseANDBoardArrays(dt2,O_pos3);
+    return BitwiseORBoardArrays(dt1,dt2);
+}
 
-// Iterative pattern analysis (still used by parts of heuristic, and as fallback)
+function detectVerticalThreeBitwise(playerBB) {
+    let t = playerBB.map(b=>b); let s;
+    s = shiftBoardVertical(playerBB, -1); t = BitwiseANDBoardArrays(t, s);
+    s = shiftBoardVertical(playerBB, -2); t = BitwiseANDBoardArrays(t, s);
+    return t;
+}
+function detectVerticalLiveThreeBitwise(playerBB, emptyBB) {
+    const p_bb=playerBB, e_bb=emptyBB;
+    let E_n1=shiftBoardVertical(e_bb,1), P0=p_bb, P1=shiftBoardVertical(p_bb,-1), P2=shiftBoardVertical(p_bb,-2), E_p3=shiftBoardVertical(e_bb,-3);
+    let lt=BitwiseANDBoardArrays(E_n1,P0); lt=BitwiseANDBoardArrays(lt,P1); lt=BitwiseANDBoardArrays(lt,P2); lt=BitwiseANDBoardArrays(lt,E_p3);
+    return lt;
+}
+function detectVerticalDeadThreeBitwise(playerBB, opponentBB, emptyBB) {
+    const p_bb=playerBB, o_bb=opponentBB, e_bb=emptyBB;
+    let P0=p_bb, P1=shiftBoardVertical(p_bb,-1), P2=shiftBoardVertical(p_bb,-2);
+    let O_n1=shiftBoardVertical(o_bb,1), E_p3=shiftBoardVertical(e_bb,-3);
+    let dt1=BitwiseANDBoardArrays(O_n1,P0); dt1=BitwiseANDBoardArrays(dt1,P1); dt1=BitwiseANDBoardArrays(dt1,P2); dt1=BitwiseANDBoardArrays(dt1,E_p3);
+    let E_n1=shiftBoardVertical(e_bb,1), O_p3=shiftBoardVertical(o_bb,-3);
+    let dt2=BitwiseANDBoardArrays(E_n1,P0); dt2=BitwiseANDBoardArrays(dt2,P1); dt2=BitwiseANDBoardArrays(dt2,P2); dt2=BitwiseANDBoardArrays(dt2,O_p3);
+    return BitwiseORBoardArrays(dt1,dt2);
+}
+
+function detectDiagonalDownRightThreeBitwise(playerBB) {
+    let t = playerBB.map(b=>b); let s;
+    s = shiftBoardDiagonalDownRight(playerBB, 1); t = BitwiseANDBoardArrays(t, s);
+    s = shiftBoardDiagonalDownRight(playerBB, 2); t = BitwiseANDBoardArrays(t, s);
+    return t;
+}
+function detectDiagonalDownRightLiveThreeBitwise(playerBB, emptyBB) {
+    const p_bb=playerBB, e_bb=emptyBB;
+    let E_n1=shiftBoardDiagonalDownRight(e_bb,1), P0=p_bb, P1=shiftBoardDiagonalDownRight(p_bb,-1), P2=shiftBoardDiagonalDownRight(p_bb,-2), E_p3=shiftBoardDiagonalDownRight(e_bb,-3);
+    let lt=BitwiseANDBoardArrays(E_n1,P0); lt=BitwiseANDBoardArrays(lt,P1); lt=BitwiseANDBoardArrays(lt,P2); lt=BitwiseANDBoardArrays(lt,E_p3);
+    return lt;
+}
+function detectDiagonalDownRightDeadThreeBitwise(playerBB, opponentBB, emptyBB) {
+    const p_bb=playerBB, o_bb=opponentBB, e_bb=emptyBB;
+    let P0=p_bb, P1=shiftBoardDiagonalDownRight(p_bb,-1), P2=shiftBoardDiagonalDownRight(p_bb,-2);
+    let O_n1=shiftBoardDiagonalDownRight(o_bb,1), E_p3=shiftBoardDiagonalDownRight(e_bb,-3);
+    let dt1=BitwiseANDBoardArrays(O_n1,P0); dt1=BitwiseANDBoardArrays(dt1,P1); dt1=BitwiseANDBoardArrays(dt1,P2); dt1=BitwiseANDBoardArrays(dt1,E_p3);
+    let E_n1=shiftBoardDiagonalDownRight(e_bb,1), O_p3=shiftBoardDiagonalDownRight(o_bb,-3);
+    let dt2=BitwiseANDBoardArrays(E_n1,P0); dt2=BitwiseANDBoardArrays(dt2,P1); dt2=BitwiseANDBoardArrays(dt2,P2); dt2=BitwiseANDBoardArrays(dt2,O_p3);
+    return BitwiseORBoardArrays(dt1,dt2);
+}
+
+function detectDiagonalDownLeftThreeBitwise(playerBB) {
+    let t = playerBB.map(b=>b); let s;
+    s = shiftBoardDiagonalDownLeft(playerBB, 1); t = BitwiseANDBoardArrays(t, s);
+    s = shiftBoardDiagonalDownLeft(playerBB, 2); t = BitwiseANDBoardArrays(t, s);
+    return t;
+}
+function detectDiagonalDownLeftLiveThreeBitwise(playerBB, emptyBB) {
+    const p_bb=playerBB, e_bb=emptyBB;
+    let E_n1=shiftBoardDiagonalDownLeft(e_bb,1), P0=p_bb, P1=shiftBoardDiagonalDownLeft(p_bb,-1), P2=shiftBoardDiagonalDownLeft(p_bb,-2), E_p3=shiftBoardDiagonalDownLeft(e_bb,-3);
+    let lt=BitwiseANDBoardArrays(E_n1,P0); lt=BitwiseANDBoardArrays(lt,P1); lt=BitwiseANDBoardArrays(lt,P2); lt=BitwiseANDBoardArrays(lt,E_p3);
+    return lt;
+}
+function detectDiagonalDownLeftDeadThreeBitwise(playerBB, opponentBB, emptyBB) {
+    const p_bb=playerBB, o_bb=opponentBB, e_bb=emptyBB;
+    let P0=p_bb, P1=shiftBoardDiagonalDownLeft(p_bb,-1), P2=shiftBoardDiagonalDownLeft(p_bb,-2);
+    let O_n1=shiftBoardDiagonalDownLeft(o_bb,1), E_p3=shiftBoardDiagonalDownLeft(e_bb,-3);
+    let dt1=BitwiseANDBoardArrays(O_n1,P0); dt1=BitwiseANDBoardArrays(dt1,P1); dt1=BitwiseANDBoardArrays(dt1,P2); dt1=BitwiseANDBoardArrays(dt1,E_p3);
+    let E_n1=shiftBoardDiagonalDownLeft(e_bb,1), O_p3=shiftBoardDiagonalDownLeft(o_bb,-3);
+    let dt2=BitwiseANDBoardArrays(E_n1,P0); dt2=BitwiseANDBoardArrays(dt2,P1); dt2=BitwiseANDBoardArrays(dt2,P2); dt2=BitwiseANDBoardArrays(dt2,O_p3);
+    return BitwiseORBoardArrays(dt1,dt2);
+}
+
+// --- Bitwise Pattern Detection for Twos ---
+function detectHorizontalTwoBitwise(playerBB) {
+    let t = playerBB.map(b=>b); let s;
+    s = shiftBoardHorizontalRight(playerBB, 1); t = BitwiseANDBoardArrays(t, s);
+    return t;
+}
+function detectHorizontalLiveTwoBitwise(playerBB, emptyBB) {
+    const p_bb=playerBB, e_bb=emptyBB;
+    let E_n1=shiftBoardHorizontalRight(e_bb,1), P0=p_bb, P1=shiftBoardHorizontalLeft(p_bb,1), E_p2=shiftBoardHorizontalLeft(e_bb,2);
+    let lt=BitwiseANDBoardArrays(E_n1,P0); lt=BitwiseANDBoardArrays(lt,P1); lt=BitwiseANDBoardArrays(lt,E_p2);
+    return lt;
+}
+function detectHorizontalDeadTwoBitwise(playerBB, opponentBB, emptyBB) {
+    const p_bb=playerBB, o_bb=opponentBB, e_bb=emptyBB;
+    let P0=p_bb,P1=shiftBoardHorizontalLeft(p_bb,1);
+    let O_n1=shiftBoardHorizontalRight(o_bb,1),E_p2=shiftBoardHorizontalLeft(e_bb,2);
+    let dt1=BitwiseANDBoardArrays(O_n1,P0);dt1=BitwiseANDBoardArrays(dt1,P1);dt1=BitwiseANDBoardArrays(dt1,E_p2);
+    let E_n1=shiftBoardHorizontalRight(e_bb,1),O_p2=shiftBoardHorizontalLeft(o_bb,2);
+    let dt2=BitwiseANDBoardArrays(E_n1,P0);dt2=BitwiseANDBoardArrays(dt2,P1);dt2=BitwiseANDBoardArrays(dt2,O_p2);
+    return BitwiseORBoardArrays(dt1,dt2);
+}
+
+function detectVerticalTwoBitwise(playerBB) {
+    let t = playerBB.map(b=>b); let s;
+    s = shiftBoardVertical(playerBB, -1); t = BitwiseANDBoardArrays(t, s);
+    return t;
+}
+function detectVerticalLiveTwoBitwise(playerBB, emptyBB) {
+    const p_bb=playerBB, e_bb=emptyBB;
+    let E_n1=shiftBoardVertical(e_bb,1), P0=p_bb, P1=shiftBoardVertical(p_bb,-1), E_p2=shiftBoardVertical(e_bb,-2);
+    let lt=BitwiseANDBoardArrays(E_n1,P0); lt=BitwiseANDBoardArrays(lt,P1); lt=BitwiseANDBoardArrays(lt,E_p2);
+    return lt;
+}
+function detectVerticalDeadTwoBitwise(playerBB, opponentBB, emptyBB) {
+    const p_bb=playerBB, o_bb=opponentBB, e_bb=emptyBB;
+    let P0=p_bb,P1=shiftBoardVertical(p_bb,-1);
+    let O_n1=shiftBoardVertical(o_bb,1),E_p2=shiftBoardVertical(e_bb,-2);
+    let dt1=BitwiseANDBoardArrays(O_n1,P0);dt1=BitwiseANDBoardArrays(dt1,P1);dt1=BitwiseANDBoardArrays(dt1,E_p2);
+    let E_n1=shiftBoardVertical(e_bb,1),O_p2=shiftBoardVertical(o_bb,-2);
+    let dt2=BitwiseANDBoardArrays(E_n1,P0);dt2=BitwiseANDBoardArrays(dt2,P1);dt2=BitwiseANDBoardArrays(dt2,O_p2);
+    return BitwiseORBoardArrays(dt1,dt2);
+}
+
+function detectDiagonalDownRightTwoBitwise(playerBB) {
+    let t = playerBB.map(b=>b); let s;
+    s = shiftBoardDiagonalDownRight(playerBB, 1); t = BitwiseANDBoardArrays(t, s);
+    return t;
+}
+function detectDiagonalDownRightLiveTwoBitwise(playerBB, emptyBB) {
+    const p_bb=playerBB, e_bb=emptyBB;
+    let E_n1=shiftBoardDiagonalDownRight(e_bb,1), P0=p_bb, P1=shiftBoardDiagonalDownRight(p_bb,-1), E_p2=shiftBoardDiagonalDownRight(e_bb,-2);
+    let lt=BitwiseANDBoardArrays(E_n1,P0); lt=BitwiseANDBoardArrays(lt,P1); lt=BitwiseANDBoardArrays(lt,E_p2);
+    return lt;
+}
+function detectDiagonalDownRightDeadTwoBitwise(playerBB, opponentBB, emptyBB) {
+    const p_bb=playerBB, o_bb=opponentBB, e_bb=emptyBB;
+    let P0=p_bb,P1=shiftBoardDiagonalDownRight(p_bb,-1);
+    let O_n1=shiftBoardDiagonalDownRight(o_bb,1),E_p2=shiftBoardDiagonalDownRight(e_bb,-2);
+    let dt1=BitwiseANDBoardArrays(O_n1,P0);dt1=BitwiseANDBoardArrays(dt1,P1);dt1=BitwiseANDBoardArrays(dt1,E_p2);
+    let E_n1=shiftBoardDiagonalDownRight(e_bb,1),O_p2=shiftBoardDiagonalDownRight(o_bb,-2);
+    let dt2=BitwiseANDBoardArrays(E_n1,P0);dt2=BitwiseANDBoardArrays(dt2,P1);dt2=BitwiseANDBoardArrays(dt2,O_p2);
+    return BitwiseORBoardArrays(dt1,dt2);
+}
+
+function detectDiagonalDownLeftTwoBitwise(playerBB) {
+    let t = playerBB.map(b=>b); let s;
+    s = shiftBoardDiagonalDownLeft(playerBB, 1); t = BitwiseANDBoardArrays(t, s);
+    return t;
+}
+function detectDiagonalDownLeftLiveTwoBitwise(playerBB, emptyBB) {
+    const p_bb=playerBB, e_bb=emptyBB;
+    let E_n1=shiftBoardDiagonalDownLeft(e_bb,1), P0=p_bb, P1=shiftBoardDiagonalDownLeft(p_bb,-1), E_p2=shiftBoardDiagonalDownLeft(e_bb,-2);
+    let lt=BitwiseANDBoardArrays(E_n1,P0); lt=BitwiseANDBoardArrays(lt,P1); lt=BitwiseANDBoardArrays(lt,E_p2);
+    return lt;
+}
+function detectDiagonalDownLeftDeadTwoBitwise(playerBB, opponentBB, emptyBB) {
+    const p_bb=playerBB, o_bb=opponentBB, e_bb=emptyBB;
+    let P0=p_bb,P1=shiftBoardDiagonalDownLeft(p_bb,-1);
+    let O_n1=shiftBoardDiagonalDownLeft(o_bb,1),E_p2=shiftBoardDiagonalDownLeft(e_bb,-2);
+    let dt1=BitwiseANDBoardArrays(O_n1,P0);dt1=BitwiseANDBoardArrays(dt1,P1);dt1=BitwiseANDBoardArrays(dt1,E_p2);
+    let E_n1=shiftBoardDiagonalDownLeft(e_bb,1),O_p2=shiftBoardDiagonalDownLeft(o_bb,-2);
+    let dt2=BitwiseANDBoardArrays(E_n1,P0);dt2=BitwiseANDBoardArrays(dt2,P1);dt2=BitwiseANDBoardArrays(dt2,O_p2);
+    return BitwiseORBoardArrays(dt1,dt2);
+}
+
+
+// Iterative pattern analysis (fallback for complex DoubleThrees in scoreMoveHeuristically for now)
 function analyzePatternOnLine(r, c, dr, dc, player) {
     const opponent = (player === PLAYER_BLACK) ? PLAYER_WHITE : PLAYER_BLACK;
     let current_r = r; let current_c = c;
@@ -459,88 +624,99 @@ function calculateScoreForPlayerOffensive(player, heuristicLevel) {
     const opponentBB = bitboards[opponent];
     const emptyBB = computeEmptyCellsBitboard();
 
-    // --- Integrate Bitwise Pattern Detection ---
-    // FIVES (Handled by checkWinForPlayer returning massive score in evaluateBoard, but can add here if needed for non-terminal states)
-    // totalScore += PopCountBoardArray(detectHorizontalFiveBitwise(playerBB)) * PATTERN_SCORES[PT_FIVE].offensive;
-    // ... (and other directions for five)
-
-    // LIVE FOURS
-    let score_lf = PATTERN_SCORES[PT_LIVE_FOUR].offensive;
-    if (heuristicLevel === 'novice' || heuristicLevel === 'apprentice') score_lf = 0;
-    if (score_lf > 0) {
-        totalScore += PopCountBoardArray(detectHorizontalLiveFourBitwise(playerBB, emptyBB)) * score_lf;
-        totalScore += PopCountBoardArray(detectVerticalLiveFourBitwise(playerBB, emptyBB)) * score_lf;
-        totalScore += PopCountBoardArray(detectDiagonalDownRightLiveFourBitwise(playerBB, emptyBB)) * score_lf;
-        totalScore += PopCountBoardArray(detectDiagonalDownLeftLiveFourBitwise(playerBB, emptyBB)) * score_lf;
+    // Bitwise Fours
+    let score_lf4 = PATTERN_SCORES[PT_LIVE_FOUR].offensive;
+    if (heuristicLevel === 'novice' || heuristicLevel === 'apprentice') score_lf4 = 0;
+    if (score_lf4 > 0) {
+        totalScore += PopCountBoardArray(detectHorizontalLiveFourBitwise(playerBB, emptyBB)) * score_lf4;
+        totalScore += PopCountBoardArray(detectVerticalLiveFourBitwise(playerBB, emptyBB)) * score_lf4;
+        totalScore += PopCountBoardArray(detectDiagonalDownRightLiveFourBitwise(playerBB, emptyBB)) * score_lf4;
+        totalScore += PopCountBoardArray(detectDiagonalDownLeftLiveFourBitwise(playerBB, emptyBB)) * score_lf4;
+    }
+    let score_df4 = PATTERN_SCORES[PT_DEAD_FOUR].offensive;
+    if (heuristicLevel === 'novice' || heuristicLevel === 'apprentice') score_df4 = 0;
+    if (score_df4 > 0) {
+        totalScore += PopCountBoardArray(detectHorizontalDeadFourBitwise(playerBB, opponentBB, emptyBB)) * score_df4;
+        totalScore += PopCountBoardArray(detectVerticalDeadFourBitwise(playerBB, opponentBB, emptyBB)) * score_df4;
+        totalScore += PopCountBoardArray(detectDiagonalDownRightDeadFourBitwise(playerBB, opponentBB, emptyBB)) * score_df4;
+        totalScore += PopCountBoardArray(detectDiagonalDownLeftDeadFourBitwise(playerBB, opponentBB, emptyBB)) * score_df4;
     }
 
-    // DEAD FOURS
-    let score_df = PATTERN_SCORES[PT_DEAD_FOUR].offensive;
-    if (heuristicLevel === 'novice' || heuristicLevel === 'apprentice') score_df = 0;
-    if (score_df > 0) {
-        totalScore += PopCountBoardArray(detectHorizontalDeadFourBitwise(playerBB, opponentBB, emptyBB)) * score_df;
-        totalScore += PopCountBoardArray(detectVerticalDeadFourBitwise(playerBB, opponentBB, emptyBB)) * score_df;
-        totalScore += PopCountBoardArray(detectDiagonalDownRightDeadFourBitwise(playerBB, opponentBB, emptyBB)) * score_df;
-        totalScore += PopCountBoardArray(detectDiagonalDownLeftDeadFourBitwise(playerBB, opponentBB, emptyBB)) * score_df;
+    // Bitwise Threes
+    let score_lt3 = PATTERN_SCORES[PT_LIVE_THREE].offensive;
+    if (heuristicLevel === 'novice') score_lt3 = 0;
+    if (score_lt3 > 0) {
+        totalScore += PopCountBoardArray(detectHorizontalLiveThreeBitwise(playerBB, emptyBB)) * score_lt3;
+        totalScore += PopCountBoardArray(detectVerticalLiveThreeBitwise(playerBB, emptyBB)) * score_lt3;
+        totalScore += PopCountBoardArray(detectDiagonalDownRightLiveThreeBitwise(playerBB, emptyBB)) * score_lt3;
+        totalScore += PopCountBoardArray(detectDiagonalDownLeftLiveThreeBitwise(playerBB, emptyBB)) * score_lt3;
+    }
+    let score_dt3 = PATTERN_SCORES[PT_DEAD_THREE].offensive;
+    if (heuristicLevel === 'novice') score_dt3 = 0;
+    if (score_dt3 > 0) {
+        totalScore += PopCountBoardArray(detectHorizontalDeadThreeBitwise(playerBB, opponentBB, emptyBB)) * score_dt3;
+        totalScore += PopCountBoardArray(detectVerticalDeadThreeBitwise(playerBB, opponentBB, emptyBB)) * score_dt3;
+        totalScore += PopCountBoardArray(detectDiagonalDownRightDeadThreeBitwise(playerBB, opponentBB, emptyBB)) * score_dt3;
+        totalScore += PopCountBoardArray(detectDiagonalDownLeftDeadThreeBitwise(playerBB, opponentBB, emptyBB)) * score_dt3;
     }
 
-    // TODO: Implement and integrate bitwise for Threes and Twos.
-    // For now, use iterative `analyzePatternOnLine` for Threes, Twos, and to catch any missed by current bitwise.
-    // This part makes the heuristic HYBRID (bitwise for Fours, iterative for others).
-    const countedIterativePatterns = new Set();
-    const staticPatternDirections = [ { dr: 0, dc: 1 }, { dr: 1, dc: 0 }, { dr: 1, dc: 1 }, { dr: 1, dc: -1 } ];
-     for (let r_board = 0; r_board < BOARD_SIZE; r_board++) {
-        for (let c_board = 0; c_board < BOARD_SIZE; c_board++) {
-            if (getCellStatus(r_board, c_board) === player) {
+    // Bitwise Twos
+    let score_lt2 = PATTERN_SCORES[PT_LIVE_TWO].offensive;
+    if (heuristicLevel === 'novice') { /* Novice can see twos by default based on table */ }
+    if (score_lt2 > 0) {
+        totalScore += PopCountBoardArray(detectHorizontalLiveTwoBitwise(playerBB, emptyBB)) * score_lt2;
+        totalScore += PopCountBoardArray(detectVerticalLiveTwoBitwise(playerBB, emptyBB)) * score_lt2;
+        totalScore += PopCountBoardArray(detectDiagonalDownRightLiveTwoBitwise(playerBB, emptyBB)) * score_lt2;
+        totalScore += PopCountBoardArray(detectDiagonalDownLeftLiveTwoBitwise(playerBB, emptyBB)) * score_lt2;
+    }
+    let score_dt2 = PATTERN_SCORES[PT_DEAD_TWO].offensive;
+     if (heuristicLevel === 'novice') { /* Novice can see twos */ }
+    if (score_dt2 > 0) {
+        totalScore += PopCountBoardArray(detectHorizontalDeadTwoBitwise(playerBB, opponentBB, emptyBB)) * score_dt2;
+        totalScore += PopCountBoardArray(detectVerticalDeadTwoBitwise(playerBB, opponentBB, emptyBB)) * score_dt2;
+        totalScore += PopCountBoardArray(detectDiagonalDownRightDeadTwoBitwise(playerBB, opponentBB, emptyBB)) * score_dt2;
+        totalScore += PopCountBoardArray(detectDiagonalDownLeftDeadTwoBitwise(playerBB, opponentBB, emptyBB)) * score_dt2;
+    }
+
+    // Dynamic Double Three check
+    let doubleThreeScoreToAdd = PATTERN_SCORES[PT_DOUBLE_THREE].offensive;
+    if (heuristicLevel === 'novice' || heuristicLevel === 'apprentice') {
+        doubleThreeScoreToAdd = 0;
+    }
+
+    if (doubleThreeScoreToAdd > 0) {
+        const candidateMovesForDoubleThree = getPossibleMoves(); // Use candidate moves
+        const staticPatternDirections = [ { dr: 0, dc: 1 }, { dr: 1, dc: 0 }, { dr: 1, dc: 1 }, { dr: 1, dc: -1 } ];
+
+        for (const move of candidateMovesForDoubleThree) {
+            // getPossibleMoves returns {x, y}, but our bitboard functions use (r, c) which is (y, x)
+            const r_empty = move.y;
+            const c_empty = move.x;
+
+            // Ensure the spot is indeed empty (getPossibleMoves should guarantee this, but double check)
+            if (getCellStatus(r_empty, c_empty) === EMPTY) {
+                setCellBit(bitboards[player], r_empty, c_empty);
+                let liveThreesFormedByThisMove = 0;
+                const liveThreeLocations = [];
                 for (const dir of staticPatternDirections) {
-                    const cellBefore_r = r_board - dir.dr; const cellBefore_c = c_board - dir.dc;
-                    if (getCellStatus(cellBefore_r, cellBefore_c) === player) continue;
-                    const patternInfo = analyzePatternOnLine(r_board, c_board, dir.dr, dir.dc, player);
-                    if (patternInfo && (patternInfo.type === PT_LIVE_THREE || patternInfo.type === PT_DEAD_THREE || patternInfo.type === PT_LIVE_TWO || patternInfo.type === PT_DEAD_TWO)) {
+                    const patternInfo = analyzePatternOnLine(r_empty, c_empty, dir.dr, dir.dc, player);
+                    if (patternInfo && patternInfo.type === PT_LIVE_THREE) {
                         let key_r1 = patternInfo.start_r, key_c1 = patternInfo.start_c, key_r2 = patternInfo.end_r, key_c2 = patternInfo.end_c;
                         if (patternInfo.start_r > patternInfo.end_r || (patternInfo.start_r === patternInfo.end_r && patternInfo.start_c > patternInfo.end_c)) {
                             key_r1 = patternInfo.end_r; key_c1 = patternInfo.end_c; key_r2 = patternInfo.start_r; key_c2 = patternInfo.start_c;
                         }
-                        const patternKey = `${patternInfo.type}:${key_r1},${key_c1}:${key_r2},${key_c2}`;
-                        if (!countedIterativePatterns.has(patternKey)) {
-                            let scoreToAdd = PATTERN_SCORES[patternInfo.type] ? PATTERN_SCORES[patternInfo.type].offensive : 0;
-                            if (heuristicLevel === 'novice' && (patternInfo.type === PT_LIVE_THREE || patternInfo.type === PT_DEAD_THREE)) scoreToAdd = 0;
-                            // Apprentice can see threes.
-                            if (scoreToAdd > 0) { totalScore += scoreToAdd; countedIterativePatterns.add(patternKey); }
+                        const liveThreeKey = `${key_r1},${key_c1}:${key_r2},${key_c2}`;
+                        if (!liveThreeLocations.includes(liveThreeKey)) {
+                            liveThreesFormedByThisMove++;
+                            liveThreeLocations.push(liveThreeKey);
                         }
                     }
                 }
-            }
-        }
-    }
-
-    // Dynamic Double Three check (remains iterative for now)
-    let doubleThreeScoreToAdd = PATTERN_SCORES[PT_DOUBLE_THREE].offensive;
-    if (heuristicLevel === 'novice' || heuristicLevel === 'apprentice') doubleThreeScoreToAdd = 0;
-
-    if (doubleThreeScoreToAdd > 0) {
-        for (let r_empty = 0; r_empty < BOARD_SIZE; r_empty++) {
-            for (let c_empty = 0; c_empty < BOARD_SIZE; c_empty++) {
-                if (getCellStatus(r_empty, c_empty) === EMPTY) {
-                    setCellBit(bitboards[player], r_empty, c_empty);
-                    let liveThreesFormedByThisMove = 0; const liveThreeLocations = [];
-                    for (const dir of staticPatternDirections) {
-                        const patternInfo = analyzePatternOnLine(r_empty, c_empty, dir.dr, dir.dc, player);
-                        if (patternInfo && patternInfo.type === PT_LIVE_THREE) {
-                            let key_r1 = patternInfo.start_r, key_c1 = patternInfo.start_c, key_r2 = patternInfo.end_r, key_c2 = patternInfo.end_c;
-                            if (patternInfo.start_r > patternInfo.end_r || (patternInfo.start_r === patternInfo.end_r && patternInfo.start_c > patternInfo.end_c)) {
-                                key_r1 = patternInfo.end_r; key_c1 = patternInfo.end_c; key_r2 = patternInfo.start_r; key_c2 = patternInfo.start_c;
-                            }
-                            const liveThreeKey = `${key_r1},${key_c1}:${key_r2},${key_c2}`;
-                            if (!liveThreeLocations.includes(liveThreeKey)) { liveThreesFormedByThisMove++; liveThreeLocations.push(liveThreeKey); }
-                        }
-                    }
-                    clearCellBit(bitboards[player], r_empty, c_empty);
-                    if (liveThreesFormedByThisMove >= 2) {
-                        totalScore += doubleThreeScoreToAdd;
-                        // Optimization: if one double three threat is found, it's often enough for heuristic.
-                        // Or sum all such threats. For now, summing.
-                    }
+                clearCellBit(bitboards[player], r_empty, c_empty);
+                if (liveThreesFormedByThisMove >= 2) {
+                    totalScore += doubleThreeScoreToAdd;
+                    // Optimization: In some heuristics, finding one double-three is enough.
+                    // Here, we sum all such opportunities found among candidate moves.
                 }
             }
         }
@@ -562,28 +738,42 @@ function checkWinForPlayer(player) {
 function scoreMoveHeuristically(r_move, c_move, player) {
     let heuristicScore = 0;
     const opponent = (player === PLAYER_BLACK) ? PLAYER_WHITE : PLAYER_BLACK;
-    const directions = [ { dr: 0, dc: 1 }, { dr: 1, dc: 0 }, { dr: 1, dc: 1 }, { dr: 1, dc: -1 } ];
+
+    // Backup global bitboards for player and opponent as this function modifies them
+    const originalPlayerBB_Self = bitboards[player].map(b => b);
+    const originalOpponentBB_Self = bitboards[opponent].map(b => b);
 
     setCellBit(bitboards[player], r_move, c_move);
     if (checkWinForPlayer(player)) {
-        clearCellBit(bitboards[player], r_move, c_move);
+        bitboards[player] = originalPlayerBB_Self;
+        bitboards[opponent] = originalOpponentBB_Self;
         return PATTERN_SCORES[PT_FIVE].offensive * 10;
     }
-    let offensiveScore = 0; const countedPlayerPatterns = new Set();
-    // This part should ideally use the new bitwise detectors for Fours, Threes, Twos for speed.
-    // For now, it uses analyzePatternOnLine for simplicity in this step.
-    for (const dir of directions) {
-        const patternInfo = analyzePatternOnLine(r_move, c_move, dir.dr, dir.dc, player);
-        if (patternInfo && PATTERN_SCORES[patternInfo.type]) {
-            let key_r1 = patternInfo.start_r, key_c1 = patternInfo.start_c, key_r2 = patternInfo.end_r, key_c2 = patternInfo.end_c;
-            if (patternInfo.start_r > patternInfo.end_r || (patternInfo.start_r === patternInfo.end_r && patternInfo.start_c > patternInfo.end_c)) {
-                key_r1 = patternInfo.end_r; key_c1 = patternInfo.end_c; key_r2 = patternInfo.start_r; key_c2 = patternInfo.start_c;
-            }
-            const patternKey = `${patternInfo.type}:${key_r1},${key_c1}:${key_r2},${key_c2}`;
-            if (!countedPlayerPatterns.has(patternKey)) { offensiveScore += PATTERN_SCORES[patternInfo.type].offensive; countedPlayerPatterns.add(patternKey); }
-        }
-    }
-    let liveThreesFormedCount = 0; const liveThreeKeys = new Set();
+
+    let offensiveScore = 0;
+    const tempEmptyBB_off = computeEmptyCellsBitboard();
+    // For scoreMoveHeuristically, we primarily care about immediate strong threats.
+    // Using full bitwise detection for all patterns might be too slow here.
+    // Let's use Fours as the main bitwise check for offensive threats created.
+    offensiveScore += PopCountBoardArray(detectHorizontalLiveFourBitwise(bitboards[player], tempEmptyBB_off)) * PATTERN_SCORES[PT_LIVE_FOUR].offensive;
+    offensiveScore += PopCountBoardArray(detectVerticalLiveFourBitwise(bitboards[player], tempEmptyBB_off)) * PATTERN_SCORES[PT_LIVE_FOUR].offensive;
+    offensiveScore += PopCountBoardArray(detectDiagonalDownRightLiveFourBitwise(bitboards[player], tempEmptyBB_off)) * PATTERN_SCORES[PT_LIVE_FOUR].offensive;
+    offensiveScore += PopCountBoardArray(detectDiagonalDownLeftLiveFourBitwise(bitboards[player], tempEmptyBB_off)) * PATTERN_SCORES[PT_LIVE_FOUR].offensive;
+    // Add Dead Fours created
+    offensiveScore += PopCountBoardArray(detectHorizontalDeadFourBitwise(bitboards[player], bitboards[opponent], tempEmptyBB_off)) * PATTERN_SCORES[PT_DEAD_FOUR].offensive;
+    offensiveScore += PopCountBoardArray(detectVerticalDeadFourBitwise(bitboards[player], bitboards[opponent], tempEmptyBB_off)) * PATTERN_SCORES[PT_DEAD_FOUR].offensive;
+    offensiveScore += PopCountBoardArray(detectDiagonalDownRightDeadFourBitwise(bitboards[player], bitboards[opponent], tempEmptyBB_off)) * PATTERN_SCORES[PT_DEAD_FOUR].offensive;
+    offensiveScore += PopCountBoardArray(detectDiagonalDownLeftDeadFourBitwise(bitboards[player], bitboards[opponent], tempEmptyBB_off)) * PATTERN_SCORES[PT_DEAD_FOUR].offensive;
+    // Add Live Threes created
+    offensiveScore += PopCountBoardArray(detectHorizontalLiveThreeBitwise(bitboards[player], tempEmptyBB_off)) * PATTERN_SCORES[PT_LIVE_THREE].offensive;
+    offensiveScore += PopCountBoardArray(detectVerticalLiveThreeBitwise(bitboards[player], tempEmptyBB_off)) * PATTERN_SCORES[PT_LIVE_THREE].offensive;
+    offensiveScore += PopCountBoardArray(detectDiagonalDownRightLiveThreeBitwise(bitboards[player], tempEmptyBB_off)) * PATTERN_SCORES[PT_LIVE_THREE].offensive;
+    offensiveScore += PopCountBoardArray(detectDiagonalDownLeftLiveThreeBitwise(bitboards[player], tempEmptyBB_off)) * PATTERN_SCORES[PT_LIVE_THREE].offensive;
+
+
+    // Double Three check for player's move (iterative is fine for this local check)
+    const directions = [ { dr: 0, dc: 1 }, { dr: 1, dc: 0 }, { dr: 1, dc: 1 }, { dr: 1, dc: -1 } ];
+    let liveThreesFormedCount = 0; const liveThreeKeysPlayer = new Set();
     for (const dir of directions) {
         const patternInfo = analyzePatternOnLine(r_move, c_move, dir.dr, dir.dc, player);
         if (patternInfo && patternInfo.type === PT_LIVE_THREE) {
@@ -591,50 +781,54 @@ function scoreMoveHeuristically(r_move, c_move, player) {
              if (patternInfo.start_r > patternInfo.end_r || (patternInfo.start_r === patternInfo.end_r && patternInfo.start_c > patternInfo.end_c)) {
                 key_r1 = patternInfo.end_r; key_c1 = patternInfo.end_c; key_r2 = patternInfo.start_r; key_c2 = patternInfo.start_c;
             }
-            const ltKey = `${key_r1},${key_c1}:${key_r2},${key_c2}`;
-            if (!liveThreeKeys.has(ltKey)) { liveThreesFormedCount++; liveThreeKeys.add(ltKey); }
+            const ltKey = `player:${key_r1},${key_c1}:${key_r2},${key_c2}`;
+            if (!liveThreeKeysPlayer.has(ltKey)) { liveThreesFormedCount++; liveThreeKeysPlayer.add(ltKey); }
         }
     }
     if (liveThreesFormedCount >= 2) offensiveScore += PATTERN_SCORES[PT_DOUBLE_THREE].offensive;
-    clearCellBit(bitboards[player], r_move, c_move);
+
+    bitboards[player] = originalPlayerBB_Self.map(b=>b);
 
     setCellBit(bitboards[opponent], r_move, c_move);
     let defensiveScore = 0;
     if (checkWinForPlayer(opponent)) {
-        clearCellBit(bitboards[opponent], r_move, c_move);
+        bitboards[opponent] = originalOpponentBB_Self.map(b=>b);
         return PATTERN_SCORES[PT_FIVE].defensive * 9;
     }
-    const countedOpponentPatterns = new Set();
-    for (const dir of directions) {
-        const patternInfo = analyzePatternOnLine(r_move, c_move, dir.dr, dir.dc, opponent);
-        if (patternInfo && PATTERN_SCORES[patternInfo.type]) {
-            let key_r1 = patternInfo.start_r, key_c1 = patternInfo.start_c, key_r2 = patternInfo.end_r, key_c2 = patternInfo.end_c;
-            if (patternInfo.start_r > patternInfo.end_r || (patternInfo.start_r === patternInfo.end_r && patternInfo.start_c > patternInfo.end_c)) {
-                key_r1 = patternInfo.end_r; key_c1 = patternInfo.end_c; key_r2 = patternInfo.start_r; key_c2 = patternInfo.start_c;
-            }
-            const patternKey = `${patternInfo.type}:${key_r1},${key_c1}:${key_r2},${key_c2}`;
-            if (!countedOpponentPatterns.has(patternKey)) { defensiveScore += PATTERN_SCORES[patternInfo.type].defensive; countedOpponentPatterns.add(patternKey); }
-        }
-    }
-    let oppLiveThreesFormedCount = 0; const oppLiveThreeKeys = new Set();
-    for (const dir of directions) {
+    const tempEmptyBB_def = computeEmptyCellsBitboard();
+    // Check strong threats by opponent that are blocked
+    defensiveScore += PopCountBoardArray(detectHorizontalLiveFourBitwise(bitboards[opponent], tempEmptyBB_def)) * PATTERN_SCORES[PT_LIVE_FOUR].defensive;
+    defensiveScore += PopCountBoardArray(detectVerticalLiveFourBitwise(bitboards[opponent], tempEmptyBB_def)) * PATTERN_SCORES[PT_LIVE_FOUR].defensive;
+    // ... (add other directions for Fours, and Threes for defensive score) ...
+    defensiveScore += PopCountBoardArray(detectHorizontalDeadFourBitwise(bitboards[opponent], bitboards[player], tempEmptyBB_def)) * PATTERN_SCORES[PT_DEAD_FOUR].defensive; // Opponent is player, current player is opponent
+    defensiveScore += PopCountBoardArray(detectVerticalDeadFourBitwise(bitboards[opponent], bitboards[player], tempEmptyBB_def)) * PATTERN_SCORES[PT_DEAD_FOUR].defensive;
+
+    defensiveScore += PopCountBoardArray(detectHorizontalLiveThreeBitwise(bitboards[opponent], tempEmptyBB_def)) * PATTERN_SCORES[PT_LIVE_THREE].defensive;
+    defensiveScore += PopCountBoardArray(detectVerticalLiveThreeBitwise(bitboards[opponent], tempEmptyBB_def)) * PATTERN_SCORES[PT_LIVE_THREE].defensive;
+
+
+    // Double Three check for opponent's potential move
+    let oppLiveThreesFormedCount = 0; const liveThreeKeysOpp = new Set();
+     for (const dir of directions) {
         const patternInfo = analyzePatternOnLine(r_move, c_move, dir.dr, dir.dc, opponent);
         if (patternInfo && patternInfo.type === PT_LIVE_THREE) {
             let key_r1 = patternInfo.start_r, key_c1 = patternInfo.start_c, key_r2 = patternInfo.end_r, key_c2 = patternInfo.end_c;
             if (patternInfo.start_r > patternInfo.end_r || (patternInfo.start_r === patternInfo.end_r && patternInfo.start_c > patternInfo.end_c)) {
                 key_r1 = patternInfo.end_r; key_c1 = patternInfo.end_c; key_r2 = patternInfo.start_r; key_c2 = patternInfo.start_c;
             }
-            const ltKey = `${key_r1},${key_c1}:${key_r2},${key_c2}`;
-            if (!oppLiveThreeKeys.has(ltKey)) { oppLiveThreesFormedCount++; oppLiveThreeKeys.add(ltKey); }
+            const ltKey = `opp:${key_r1},${key_c1}:${key_r2},${key_c2}`;
+            if (!liveThreeKeysOpp.has(ltKey)) { oppLiveThreesFormedCount++; liveThreeKeysOpp.add(ltKey); }
         }
     }
     if (oppLiveThreesFormedCount >= 2) defensiveScore += PATTERN_SCORES[PT_DOUBLE_THREE].defensive;
-    clearCellBit(bitboards[opponent], r_move, c_move);
+
+    bitboards[opponent] = originalOpponentBB_Self.map(b=>b);
 
     heuristicScore = offensiveScore + defensiveScore;
     for (let dr_adj = -1; dr_adj <= 1; dr_adj++) {
         for (let dc_adj = -1; dc_adj <= 1; dc_adj++) {
             if (dr_adj === 0 && dc_adj === 0) continue;
+            // Read from original state (which is current global state now)
             if (getCellStatus(r_move + dr_adj, c_move + dc_adj) !== EMPTY && getCellStatus(r_move + dr_adj, c_move + dc_adj) !== 'EDGE') {
                 heuristicScore += 0.5;
             }
@@ -725,9 +919,8 @@ function findBestMove(currentSearchDepth, heuristicLevel, alpha, beta, maximizin
         const scoredSortedMoves = movesToScoreSort.map(move => {
             let score;
             if (getCellStatus(move.y, move.x) === EMPTY) {
-                setCellBit(bitboards[currentPlayerForSort], move.y, move.x);
+                // scoreMoveHeuristically modifies global bitboards, this is intended for its simulation
                 score = scoreMoveHeuristically(move.y, move.x, currentPlayerForSort);
-                clearCellBit(bitboards[currentPlayerForSort], move.y, move.x);
             } else {
                 score = -Infinity;
             }
@@ -1043,7 +1236,6 @@ self.onmessage = function(e) {
         // Omniscience uses 2D array logic
         self.playerForOmniInternal = omniPlayer;
         const opponent = (omniPlayer === PLAYER_BLACK) ? PLAYER_WHITE : PLAYER_BLACK;
-        // Note: getDetailedPatternHints and its sub-functions (checkFiveOmni, etc.) still use the passed `omniBoard` (2D array).
         const playerOpportunities = getDetailedPatternHints(omniBoard, omniPlayer);
         const opponentThreats = getDetailedPatternHints(omniBoard, opponent);
 

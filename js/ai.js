@@ -3,39 +3,39 @@
 const AI_DIFFICULTY_PROFILES = {
     1: { // Novice
         name: "Novice",
-        searchDepth: 2,
+        searchDepth: 2, // Increased from 1, was originally 2
         heuristicLevel: 'novice',
-        randomness: 0.6,
-        randomTopN: 5
+        randomness: 0.5, // Tuned from 0.6
+        randomTopN: 4    // Tuned from 5
     },
     2: { // Apprentice
         name: "Apprentice",
-        searchDepth: 3,
+        searchDepth: 2, // Kept at 2
         heuristicLevel: 'apprentice',
-        randomness: 0.3,
-        randomTopN: 3
+        randomness: 0.25, // Tuned from 0.3
+        randomTopN: 3     // Kept at 3
     },
     3: { // Adept
         name: "Adept",
-        searchDepth: 4,
+        searchDepth: 3,
         heuristicLevel: 'adept',
         randomness: 0.1,
         randomTopN: 2
     },
     4: { // Expert
         name: "Expert",
-        searchDepth: 5,
+        searchDepth: 4,
         heuristicLevel: 'expert',
         randomness: 0,
         randomTopN: 1
     },
     5: { // Master
         name: "Master",
-        searchDepth: 6,
+        searchDepth: 4,
         heuristicLevel: 'master',
         randomness: 0,
         randomTopN: 1,
-        useOpeningBook: true // Added for opening book
+        useOpeningBook: true
     }
 };
 let currentSelectedDifficultyLevel = 3; // Default to Adept (level 3)
