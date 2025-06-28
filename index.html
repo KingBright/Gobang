@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gomoku AI Trainer</title>
+    <title>五子棋AI训练器</title>
     <link rel="stylesheet" href="css/style.css">
     <link rel="stylesheet" href="css/responsive.css">
 </head>
@@ -13,22 +13,22 @@
         
         <div id="controls-panel">
             <div id="controls">
-                <button id="new-game-btn">New Game</button>
-                <button id="undo-btn">Undo</button>
+                <button id="new-game-btn">新游戏</button>
+                <button id="undo-btn">悔棋</button>
                 <div class="control-group">
-                    <label for="ai-difficulty">AI Level:</label>
+                    <label for="ai-difficulty">AI等级:</label>
                     <select id="ai-difficulty">
                         <!-- Options will be populated by main.js -->
                     </select>
                 </div>
                 <div class="control-group">
-                    <label for="omniscience-mode">Omniscience Mode:</label>
+                    <label for="omniscience-mode">全知模式:</label>
                     <input type="checkbox" id="omniscience-mode">
                 </div>
             </div>
             
             <div id="game-info">
-                <p id="game-message">Welcome to Gomoku!</p>
+                <p id="game-message">欢迎来到五子棋!</p> <!-- Default message, also set in ui.js -->
                 <!-- More info like AI thinking time could be added here -->
             </div>
         </div>

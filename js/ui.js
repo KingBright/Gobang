@@ -2,7 +2,12 @@
 
 // --- Module-scoped Variables ---
 let canvas, ctx;
-let messageEl;
+let messageEl; // For the inline game message
+
+// Modal elements
+let messageModal, modalMessageText, modalCloseBtn;
+let confirmModal, confirmModalText, confirmModalYesBtn, confirmModalNoBtn;
+
 // Dynamic drawing parameters, will be updated by resizeCanvasInternal
 let currentCellSize = 30; // Default, will be recalculated
 let currentStoneRadius = currentCellSize / 2 * 0.85; // Default
@@ -22,6 +27,16 @@ function initUIInternal() {
     ctx = canvas.getContext('2d');
     messageEl = document.getElementById('game-message'); // From index.html
 
+    // Initialize Modal elements
+    messageModal = document.getElementById('message-modal');
+    modalMessageText = document.getElementById('modal-message-text');
+    modalCloseBtn = document.getElementById('modal-close-btn');
+
+    confirmModal = document.getElementById('confirm-modal');
+    confirmModalText = document.getElementById('confirm-modal-text');
+    confirmModalYesBtn = document.getElementById('confirm-modal-yes-btn');
+    confirmModalNoBtn = document.getElementById('confirm-modal-no-btn');
+
     // Initial canvas setup is triggered by the first call to resizeCanvasInternal
     resizeCanvasInternal(); 
 
@@ -33,8 +48,63 @@ function initUIInternal() {
 
     window.addEventListener('resize', resizeCanvasInternal); // Make canvas responsive
 
-    console.log("UI Initialized (internal). Canvas ready, responsive sizing active.");
+    // Modal close button listener (for the general message modal)
+    if (modalCloseBtn) {
+        modalCloseBtn.addEventListener('click', () => {
+            if (messageModal) messageModal.classList.remove('active');
+        });
+    }
+
+    console.log("UI Initialized (internal). Canvas and Modals ready, responsive sizing active.");
 }
+
+
+// --- Modal Control Functions ---
+function showMessageModalInternal(message) {
+    if (modalMessageText && messageModal) {
+        modalMessageText.textContent = message;
+        messageModal.classList.add('active');
+    } else {
+        console.warn("Message modal elements not found. Falling back to alert.");
+        alert(message); // Fallback
+    }
+}
+
+// This will replace the old showSmartUndoModalInternal that uses confirm()
+// It now takes callbacks for 'yes' and 'no' actions.
+function showConfirmModalInternal(message, onYesCallback, onNoCallback) {
+    if (confirmModal && confirmModalText && confirmModalYesBtn && confirmModalNoBtn) {
+        confirmModalText.textContent = message;
+        confirmModal.classList.add('active');
+
+        // Remove previous listeners to avoid stacking
+        const newYesBtn = confirmModalYesBtn.cloneNode(true);
+        confirmModalYesBtn.parentNode.replaceChild(newYesBtn, confirmModalYesBtn);
+        confirmModalYesBtn = newYesBtn;
+
+        const newNoBtn = confirmModalNoBtn.cloneNode(true);
+        confirmModalNoBtn.parentNode.replaceChild(newNoBtn, confirmModalNoBtn);
+        confirmModalNoBtn = newNoBtn;
+
+        confirmModalYesBtn.addEventListener('click', () => {
+            confirmModal.classList.remove('active');
+            if (onYesCallback) onYesCallback();
+        });
+        confirmModalNoBtn.addEventListener('click', () => {
+            confirmModal.classList.remove('active');
+            if (onNoCallback) onNoCallback();
+        });
+    } else {
+        console.warn("Confirm modal elements not found. Falling back to confirm().");
+        // Fallback to old confirm behavior
+        if (confirm(message)) {
+            if (onYesCallback) onYesCallback();
+        } else {
+            if (onNoCallback) onNoCallback();
+        }
+    }
+}
+
 
 // --- Responsive Canvas Sizing ---
 function resizeCanvasInternal() {
@@ -202,21 +272,21 @@ function updateGameMessageInternal(currentPlayer, gameState) {
         
         // Check win condition using gameApi.checkWin for accuracy
         if (lastMove && window.gameApi.checkWin(lastMove.x, lastMove.y)) {
-            message = `Player ${lastMove.player === PLAYER_BLACK ? 'Black' : 'White'} wins!`;
+            message = `玩家 ${lastMove.player === PLAYER_BLACK ? '黑棋' : '白棋'} 胜利!`; // Player Black/White wins!
         } else if (history.length === BOARD_SIZE * BOARD_SIZE) {
-            message = "It's a draw!";
+            message = "平局!"; // It's a draw!
         } else {
             // This case might occur if game ended for other reasons or state is inconsistent
-            message = "Game Over!"; 
+            message = "游戏结束!"; // Game Over!
         }
     } else if (gameState === GAME_STATE_PLAYING) {
-        message = `Player ${currentPlayer === PLAYER_BLACK ? 'Black' : 'White'}'s turn`;
+        message = `轮到 ${currentPlayer === PLAYER_BLACK ? '黑棋' : '白棋'} 行棋`; // Player Black/White's turn
     } else if (gameState === GAME_STATE_PAUSED) {
-        message = "AI is thinking...";
+        message = "AI 思考中..."; // AI is thinking...
     } else if (gameState === GAME_STATE_IDLE) {
-        message = "Welcome to Gomoku! Select options and click New Game.";
+        message = "欢迎来到五子棋! 请选择选项开始新游戏。"; // Welcome to Gomoku! Select options and click New Game.
     } else {
-        message = "Gomoku AI Trainer"; // Default or unknown state
+        message = "五子棋AI训练器"; // Gomoku AI Trainer (Default or unknown state)
     }
     messageEl.textContent = message;
 }
@@ -260,31 +330,20 @@ function drawOmniHintsInternal() {
 }
 
 // --- Smart Undo UI (Modal - Placeholder for now, full implementation in Phase 3) ---
-function showSmartUndoModalInternal(onConfirm, onUndo) {
-    console.log("UI: Smart Undo - Displaying risk prompt (using confirm placeholder).");
-    // A proper modal would be non-blocking and allow UI updates.
-    // setTimeout ensures this runs after current execution stack, slightly better than direct confirm.
-    setTimeout(() => { 
-        const userChoice = confirm(
-            "WARNING: This move is risky!\n" +
-            "The opponent may have a winning move next.\n\n" +
-            "Do you want to proceed with your move, or undo it?"
-        );
-        if (userChoice) { // User chose "OK" (Confirm Move)
-            onConfirm();
-        } else { // User chose "Cancel" (Undo This Move)
-            onUndo();
-        }
-    }, 50); // Small delay
+// This function now uses the new showConfirmModalInternal
+function showSmartUndoModalInternal(onConfirmCallback, onUndoCallback) {
+    const message = "警告: 此步有风险!\n对手下一步可能获胜。\n\n您确定要下这一步，还是悔棋?";
+    console.log("UI: Smart Undo - Displaying risk prompt using custom modal.");
+    showConfirmModalInternal(message, onConfirmCallback, onUndoCallback);
 }
 
 // --- API Exposure for main.js ---
 window.uiApi = {
     initUI: initUIInternal,
     drawGame: drawGameInternal,
-    // updateGameMessage is called by drawGame, so not strictly needed externally yet
     toggleOmniscienceMode: toggleOmniscienceModeInternal,
-    showSmartUndoModal: showSmartUndoModalInternal
+    showSmartUndoModal: showSmartUndoModalInternal, // For smart undo risk
+    showGameMessageModal: showMessageModalInternal // For win/loss/draw messages
     // resizeCanvas is self-managed via event listener
 };
 

@@ -64,10 +64,21 @@ function getCanvasRelativePos(canvas, evt) {
     const rect = canvas.getBoundingClientRect();
     let clientX, clientY;
 
-    if (evt.touches && evt.touches.length > 0) {
-        clientX = evt.touches[0].clientX;
-        clientY = evt.touches[0].clientY;
-    } else {
+    if (evt.type.startsWith('touch')) { // Check if it's a touch event
+        if (evt.changedTouches && evt.changedTouches.length > 0) {
+            // For touchend, changedTouches is more reliable. For touchstart/move, touches is fine.
+            clientX = evt.changedTouches[0].clientX;
+            clientY = evt.changedTouches[0].clientY;
+        } else if (evt.touches && evt.touches.length > 0) {
+            // Fallback for other touch events if changedTouches isn't primary (e.g. touchstart)
+            clientX = evt.touches[0].clientX;
+            clientY = evt.touches[0].clientY;
+        } else {
+            // Should not happen if it's a touch event and we have touches/changedTouches
+            console.warn("Touch event detected but no touch points found in touches or changedTouches.");
+            return { x: -1, y: -1 }; // Indicate error
+        }
+    } else { // Mouse event
         clientX = evt.clientX;
         clientY = evt.clientY;
     }
