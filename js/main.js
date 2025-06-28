@@ -203,9 +203,9 @@ function handleUndo() {
     gameApi.setCurrentPlayer(humanPlayer);
     
     uiApi.drawGame(); // Redraw after undo
-    // NEW: Trigger omniscience update after general undo
-    if (uiApi.triggerOmniscienceUpdateIfActive) {
-        uiApi.triggerOmniscienceUpdateIfActive();
+    // NEW: Trigger assist mode update after general undo
+    if (uiApi.triggerAssistModeUpdateIfActive) { // Changed function name
+        uiApi.triggerAssistModeUpdateIfActive();
     }
 }
 
@@ -348,9 +348,9 @@ function proceedToAiTurn() {
                     if (aiMoveSuccessful) {
                         uiApi.drawGame(); // Draw AI's move
 
-                        // Trigger omniscience update if active, after AI's move is drawn
-                        if (uiApi.triggerOmniscienceUpdateIfActive) {
-                            uiApi.triggerOmniscienceUpdateIfActive();
+                        // Trigger assist mode update if active, after AI's move is drawn
+                        if (uiApi.triggerAssistModeUpdateIfActive) { // Changed function name
+                            uiApi.triggerAssistModeUpdateIfActive();
                         }
 
                         if (gameApi.getGameState() === GAME_STATE_ENDED) {
