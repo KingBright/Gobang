@@ -233,10 +233,12 @@ function proceedToAiTurn() {
         const aiMove = window.aiApi.aiMakeMove(currentBoardForAI); 
 
         if (aiMove) { 
+            // Set game state to PLAYING before AI makes its move, as makeMove checks this.
+            gameApi.setGameState(GAME_STATE_PLAYING);
             const aiMoveSuccessful = gameApi.makeMove(aiMove.x, aiMove.y); 
 
             if (aiMoveSuccessful) {
-                gameApi.setGameState(GAME_STATE_PLAYING); 
+                // gameApi.setGameState(GAME_STATE_PLAYING); // Already set before the move
                 uiApi.drawGame(); 
                 if (gameApi.getGameState() === GAME_STATE_ENDED) {
                     console.log("Main.js: Game ended after AI move.");
