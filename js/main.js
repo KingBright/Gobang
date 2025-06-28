@@ -18,8 +18,15 @@ window.onload = () => {
     }
     gameApi = window.gameApi;
     uiApi = window.uiApi;
-    // When ai.js exposes window.aiApi, it will be assigned here.
-    // For now, parts of the code will check if window.aiApi is available before using it.
+    // Assign aiApi if available
+    if (window.aiApi) {
+        aiApi = window.aiApi;
+        console.log("Main.js: aiApi successfully loaded.");
+    } else {
+        console.warn("Main.js: window.aiApi not found at onload. AI functionality might be limited until it loads or if not exposed correctly.");
+        // The application will still try to use window.aiApi directly where needed,
+        // relying on script load order. This local aiApi is for consistency if used.
+    }
 
     // Initialize UI (which also handles initial canvas sizing and drawing)
     uiApi.initUI(); 

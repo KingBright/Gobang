@@ -456,5 +456,16 @@ function createsPattern(board, lastX, lastY, player, length, openStart, openEnd)
 }
 
 
-console.log("ai.js loaded");
+console.log("ai.js loaded. Exposing API via window.aiApi...");
+
+window.aiApi = {
+    aiMakeMove: aiMakeMove,
+    setAiDifficulty: setAiDifficulty,
+    // Exposing for Smart Undo and Omniscience features that might need them
+    findBestMove: findBestMove,
+    getPatternScores: () => { return {...PATTERN_SCORES}; }, // Return a copy to prevent modification
+    evaluatePointOmniscience: evaluatePointOmniscience,
+    // getCurrentAiLevel: () => currentAiDifficulty, // Example if main.js needed to read it
+    // getDifficultyLevels: () => { return {...AI_DIFFICULTY_LEVELS}; }, // Example
+};
 
