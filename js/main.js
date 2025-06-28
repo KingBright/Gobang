@@ -65,7 +65,7 @@ function setupControlListeners() {
     const selectWhiteRadio = document.getElementById('select-white');
     const undoBtn = document.getElementById('undo-btn');
     const aiDifficultySelect = document.getElementById('ai-difficulty');
-    const omniscienceToggle = document.getElementById('omniscience-mode');
+    const assistModeToggle = document.getElementById('assist-mode'); // Changed ID
 
     if (newGameBtn) {
         newGameBtn.addEventListener('click', handleNewGame);
@@ -115,13 +115,17 @@ function setupControlListeners() {
         });
     } else { console.warn("Main.js: AI Difficulty select ('ai-difficulty') not found."); }
 
-    if (omniscienceToggle) {
-        omniscienceToggle.addEventListener('change', (event) => {
+    if (assistModeToggle) { // Changed variable name
+        assistModeToggle.addEventListener('change', (event) => {
             const isActive = event.target.checked;
-            uiApi.toggleOmniscienceMode(isActive); // uiApi handles redraw
-            console.log(`Main.js: Omniscience Mode toggled: ${isActive}`);
+            if (uiApi && uiApi.toggleAssistMode) { // Changed function call
+                uiApi.toggleAssistMode(isActive); // uiApi handles redraw
+                console.log(`Main.js: Assist Mode toggled: ${isActive}`);
+            } else {
+                console.warn("Main.js: uiApi.toggleAssistMode function not found.");
+            }
         });
-    } else { console.warn("Main.js: Omniscience Mode toggle ('omniscience-mode') not found."); }
+    } else { console.warn("Main.js: Assist Mode toggle ('assist-mode') not found."); }
 }
 
 // --- Control Event Handlers ---
@@ -138,22 +142,22 @@ function handleNewGame() {
         window.aiApi.resetAi();
     }
 
-    // Clear omniscient mode indicator if it exists
-    const omniscientIndicator = document.getElementById('omniscient-mode-indicator');
-    if (omniscientIndicator) {
-        omniscientIndicator.remove();
-    }
+    // Clear assist mode indicator if it exists (assuming its ID might change or be removed, for now, this is a placeholder if such an element existed)
+    // const assistIndicator = document.getElementById('assist-mode-indicator'); // Example if it existed
+    // if (assistIndicator) {
+    //     assistIndicator.remove();
+    // }
 
-    // Reset the omniscience mode toggle and internal state
-    const omniscienceToggle = document.getElementById('omniscience-mode');
-    if (omniscienceToggle && omniscienceToggle.checked) {
-        omniscienceToggle.checked = false; // Visually uncheck the toggle
-        if (uiApi && uiApi.toggleOmniscienceMode) { // Ensure uiApi and function exist
-            uiApi.toggleOmniscienceMode(false); // Update internal state and trigger related UI changes (like removing hints)
+    // Reset the assist mode toggle and internal state
+    const assistModeToggle = document.getElementById('assist-mode'); // Changed ID
+    if (assistModeToggle && assistModeToggle.checked) {
+        assistModeToggle.checked = false; // Visually uncheck the toggle
+        if (uiApi && uiApi.toggleAssistMode) { // Ensure uiApi and function exist & changed function name
+            uiApi.toggleAssistMode(false); // Update internal state and trigger related UI changes (like removing hints)
         }
     }
 
-    uiApi.drawGame();   // This will redraw the board, and with omniscience mode off, hints won't be drawn.
+    uiApi.drawGame();   // This will redraw the board, and with assist mode off, hints won't be drawn.
 
     // If human chose White, AI (Black) makes the first move.
     // gameApi.getCurrentPlayer() will be PLAYER_BLACK because black always starts.
@@ -223,9 +227,9 @@ window.handleHumanMove = function(x, y) {
     if (moveSuccessful) {
         uiApi.drawGame(); 
 
-        // Trigger omniscience update if active, after player's move is drawn
-        if (uiApi.triggerOmniscienceUpdateIfActive) {
-            uiApi.triggerOmniscienceUpdateIfActive();
+        // Trigger assist mode update if active, after player's move is drawn
+        if (uiApi.triggerAssistModeUpdateIfActive) { // Changed function name
+            uiApi.triggerAssistModeUpdateIfActive();
         }
 
         if (gameApi.getGameState() === GAME_STATE_ENDED) {
@@ -270,9 +274,9 @@ window.handleHumanMove = function(x, y) {
                     gameApi.undoMove(); // Undoes player's last move
                     gameApi.setGameState(GAME_STATE_PLAYING); // Resume
                     uiApi.drawGame(); // Redraw, player can move again
-                    // NEW: Trigger omniscience update after undo
-                    if (uiApi.triggerOmniscienceUpdateIfActive) {
-                        uiApi.triggerOmniscienceUpdateIfActive();
+                    // NEW: Trigger assist mode update after undo
+                    if (uiApi.triggerAssistModeUpdateIfActive) { // Changed function name
+                        uiApi.triggerAssistModeUpdateIfActive();
                     }
                 }
             );
