@@ -1,3 +1,5 @@
+console.log("DEBUG: File loaded: js/evaluate.js"); // DBG_LOAD_EVAL
+
 // Gomoku Incremental Evaluation Logic
 // Inspired by lihongxun945/gobang/src/ai/eval.js
 
@@ -21,6 +23,14 @@ const SCORE_VALUES = {
 
 class Evaluate {
     constructor(size, pBlack, pWhite, pEmpty) {
+        console.log("DEBUG: Evaluate constructor entered."); // DBG_EVAL_CONSTRUCTOR
+        console.log(`DEBUG: Evaluate constructor - Globals: BOARD_SIZE=${typeof BOARD_SIZE}, PLAYER_BLACK=${typeof PLAYER_BLACK}, PLAYER_WHITE=${typeof PLAYER_WHITE}, EMPTY=${typeof EMPTY}`); // DBG_EVAL_GLOBALS
+        console.log(`DEBUG: Evaluate constructor - Params: size=${size}, pB=${pBlack}, pW=${pWhite}, pE=${pEmpty}`); // DBG_EVAL_PARAMS
+        if (!window.shapeUtils || !window.shapeUtils.shapes) {
+            console.error("DEBUG: Evaluate constructor - window.shapeUtils or window.shapeUtils.shapes not found! This is critical."); // DBG_EVAL_SHAPEUTILS
+        }
+
+
         this.size = size;
         this.PLAYER_BLACK = pBlack;
         this.PLAYER_WHITE = pWhite;
@@ -41,9 +51,10 @@ class Evaluate {
             [this.PLAYER_WHITE]: 1
         };
 
+        const defaultShapeNone = (window.shapeUtils && window.shapeUtils.shapes) ? window.shapeUtils.shapes.NONE : 0;
         this.shapeCache = [
-            Array(4).fill(null).map(() => Array(this.size).fill(null).map(() => Array(this.size).fill(window.shapeUtils.shapes.NONE))),
-            Array(4).fill(null).map(() => Array(this.size).fill(null).map(() => Array(this.size).fill(window.shapeUtils.shapes.NONE)))
+            Array(4).fill(null).map(() => Array(this.size).fill(null).map(() => Array(this.size).fill(defaultShapeNone))),
+            Array(4).fill(null).map(() => Array(this.size).fill(null).map(() => Array(this.size).fill(defaultShapeNone)))
         ];
 
         this.allDirections = [
@@ -51,18 +62,25 @@ class Evaluate {
             { dr: 1, dc: 1,  idx: 2 }, { dr: 1, dc: -1, idx: 3 }
         ];
 
+        console.log("DEBUG: Evaluate constructor - Initializing point scores for empty board."); // DBG_EVAL_INIT_SCORES
         for (let r = 0; r < this.size; r++) {
             for (let c = 0; c < this.size; c++) {
                 if (this.board[r + 1][c + 1] === this.EMPTY) {
-                    this._updateSinglePointScore(r, c, this.PLAYER_BLACK);
-                    this._updateSinglePointScore(r, c, this.PLAYER_WHITE);
+                    // Check if shapeUtils are available before calling methods that use them
+                    if (window.shapeUtils && window.shapeUtils.getShapeFast) {
+                        this._updateSinglePointScore(r, c, this.PLAYER_BLACK);
+                        this._updateSinglePointScore(r, c, this.PLAYER_WHITE);
+                    } else {
+                        // console.warn(`DEBUG: Evaluate constructor - shapeUtils not fully ready during initial score update for ${r},${c}`);
+                    }
                 }
             }
         }
+        console.log("DEBUG: Evaluate constructor exited."); // DBG_EVAL_CONSTRUCTOR_END
     }
 
     _getScoreForShape(shape) {
-        const s = window.shapeUtils.shapes;
+        const s = (window.shapeUtils && window.shapeUtils.shapes) ? window.shapeUtils.shapes : {}; // Fallback
         switch (shape) {
             case s.FIVE: return SCORE_VALUES.FIVE;
             case s.FOUR: return SCORE_VALUES.FOUR;
@@ -79,12 +97,18 @@ class Evaluate {
     }
 
     _updateSinglePointScore(r, c, playerRole) {
+        if (!window.shapeUtils || !window.shapeUtils.getShapeFast || !window.shapeUtils.shapes) {
+            // console.warn("DEBUG: _updateSinglePointScore - shapeUtils not available. Skipping update.");
+            return;
+        }
+        const defaultShapeNone = window.shapeUtils.shapes.NONE;
+
         if (this.board[r + 1][c + 1] !== this.EMPTY) {
             const pIdx = this.playerIndexMap[playerRole];
-            if (pIdx === undefined) return; // Should not happen with valid playerRole
+            if (pIdx === undefined) return;
             this.pointScores[pIdx][r][c] = 0;
             for (let dirIdx = 0; dirIdx < 4; dirIdx++) {
-                this.shapeCache[pIdx][dirIdx][r][c] = window.shapeUtils.shapes.NONE;
+                this.shapeCache[pIdx][dirIdx][r][c] = defaultShapeNone;
             }
             return;
         }
@@ -92,7 +116,7 @@ class Evaluate {
         const pIdx = this.playerIndexMap[playerRole];
         if (pIdx === undefined) return;
 
-        this.board[r + 1][c + 1] = playerRole; // Temporarily place piece
+        this.board[r + 1][c + 1] = playerRole;
 
         for (const dir of this.allDirections) {
             const [shapeEnumVal, /*count*/] = window.shapeUtils.getShapeFast(this.board, r, c, dir.dr, dir.dc, playerRole);
@@ -102,10 +126,14 @@ class Evaluate {
         const combinedScore = this._calculateCombinedScoreForPoint(r, c, pIdx);
         this.pointScores[pIdx][r][c] = combinedScore;
 
-        this.board[r + 1][c + 1] = this.EMPTY; // Remove temporary piece
+        this.board[r + 1][c + 1] = this.EMPTY;
     }
 
     _calculateCombinedScoreForPoint(r, c, pIdx) {
+        if (!window.shapeUtils || !window.shapeUtils.shapes) {
+            // console.warn("DEBUG: _calculateCombinedScoreForPoint - shapeUtils not available. Returning 0.");
+            return 0;
+        }
         let score = 0;
         let liveThrees = 0;
         let blockedFours = 0;
@@ -118,11 +146,11 @@ class Evaluate {
             if (shape === s.FOUR) liveFours++;
             if (shape === s.BLOCK_FOUR) blockedFours++;
             if (shape === s.THREE) liveThrees++;
-            score += this._getScoreForShape(shape); // Sum basic scores first
+            score += this._getScoreForShape(shape);
         }
 
         if (liveFours >= 1 && liveThrees >=1) score = Math.max(score, SCORE_VALUES.FOUR_THREE);
-        else if (liveFours >= 1) score = Math.max(score, SCORE_VALUES.FOUR); // Handles multiple live fours too
+        else if (liveFours >= 1) score = Math.max(score, SCORE_VALUES.FOUR);
         else if (blockedFours >= 2) score = Math.max(score, SCORE_VALUES.FOUR_FOUR);
         else if (blockedFours >= 1 && liveThrees >=1) score = Math.max(score, SCORE_VALUES.FOUR_THREE);
         else if (liveThrees >= 2) score = Math.max(score, SCORE_VALUES.THREE_THREE);
@@ -131,11 +159,16 @@ class Evaluate {
     }
 
     _updateAffectedPoints(r, c, _placedPlayerRole) {
-        this.pointScores[this.playerIndexMap[this.PLAYER_BLACK]][r][c] = 0;
-        this.pointScores[this.playerIndexMap[this.PLAYER_WHITE]][r][c] = 0;
+        const defaultShapeNone = (window.shapeUtils && window.shapeUtils.shapes) ? window.shapeUtils.shapes.NONE : 0;
+        const pIdxBlack = this.playerIndexMap[this.PLAYER_BLACK];
+        const pIdxWhite = this.playerIndexMap[this.PLAYER_WHITE];
+
+        if (pIdxBlack !== undefined) this.pointScores[pIdxBlack][r][c] = 0;
+        if (pIdxWhite !== undefined) this.pointScores[pIdxWhite][r][c] = 0;
+
         for (let dirIdx = 0; dirIdx < 4; dirIdx++) {
-            this.shapeCache[this.playerIndexMap[this.PLAYER_BLACK]][dirIdx][r][c] = window.shapeUtils.shapes.NONE;
-            this.shapeCache[this.playerIndexMap[this.PLAYER_WHITE]][dirIdx][r][c] = window.shapeUtils.shapes.NONE;
+            if (pIdxBlack !== undefined) this.shapeCache[pIdxBlack][dirIdx][r][c] = defaultShapeNone;
+            if (pIdxWhite !== undefined) this.shapeCache[pIdxWhite][dirIdx][r][c] = defaultShapeNone;
         }
 
         for (let dr_offset = -5; dr_offset <= 5; dr_offset++) {
@@ -177,6 +210,11 @@ class Evaluate {
         const blackIdx = this.playerIndexMap[this.PLAYER_BLACK];
         const whiteIdx = this.playerIndexMap[this.PLAYER_WHITE];
 
+        if (blackIdx === undefined || whiteIdx === undefined) {
+            console.error("DEBUG: evaluateBoard - playerIndexMap not correctly initialized for PLAYER_BLACK or PLAYER_WHITE.");
+            return 0;
+        }
+
         for (let i = 0; i < this.size; i++) {
             for (let j = 0; j < this.size; j++) {
                 if (this.board[i+1][j+1] === this.EMPTY) {
@@ -189,47 +227,53 @@ class Evaluate {
     }
 
     getMoves(playerRole, depth, onlyThree = false, onlyFour = false) {
+        if (!window.shapeUtils || !window.shapeUtils.shapes) {
+            console.warn("DEBUG: getMoves - shapeUtils not available. Returning empty array.");
+            return [];
+        }
         const s = window.shapeUtils.shapes;
         const pIdx = this.playerIndexMap[playerRole];
         const oppRole = (playerRole === this.PLAYER_BLACK) ? this.PLAYER_WHITE : this.PLAYER_BLACK;
         const oppIdx = this.playerIndexMap[oppRole];
 
+        if (pIdx === undefined || oppIdx === undefined) {
+            console.error("DEBUG: getMoves - playerIndexMap not correctly initialized.");
+            return [];
+        }
+
         let movesByType = {
             playerFives: new Set(), opponentBlockFives: new Set(),
             playerFours: new Set(), opponentBlockFours: new Set(),
-            playerFourThrees: new Set(), playerThreeThrees: new Set(), // Composite for player
-            opponentFourThrees: new Set(), opponentThreeThrees: new Set(), // Composite for opponent to block
+            playerFourThrees: new Set(), playerThreeThrees: new Set(),
+            opponentFourThrees: new Set(), opponentThreeThrees: new Set(),
             playerThrees: new Set(), opponentBlockThrees: new Set(),
-            playerTwos: new Set(), // Other decent moves
-            fallbackPoints: [] // For general sorting if no direct threats
+            playerTwos: new Set(),
+            fallbackPoints: []
         };
 
         for (let r = 0; r < this.size; r++) {
             for (let c = 0; c < this.size; c++) {
                 if (this.board[r + 1][c + 1] !== this.EMPTY) continue;
                 const move = { y: r, x: c };
-                const moveStr = `${r}-${c}`; // For Set uniqueness if objects are new
+                const moveStr = `${r}-${c}`;
 
-                // Check player's potential shapes if they play at (r,c)
                 let pLiveThrees = 0, pBlockedFours = 0, pLiveFours = 0;
                 for (let dirIdx = 0; dirIdx < 4; dirIdx++) {
-                    const shape = this.shapeCache[pIdx][dirIdx][r][c];
-                    if (shape === s.FIVE) { movesByType.playerFives.add(moveStr); break; }
-                    if (shape === s.FOUR) pLiveFours++;
-                    if (shape === s.BLOCK_FOUR) pBlockedFours++;
-                    if (shape === s.THREE) pLiveThrees++;
+                    const playerShape = this.shapeCache[pIdx][dirIdx][r][c];
+                    if (playerShape === s.FIVE) { movesByType.playerFives.add(moveStr); break; }
+                    if (playerShape === s.FOUR) pLiveFours++;
+                    if (playerShape === s.BLOCK_FOUR) pBlockedFours++;
+                    if (playerShape === s.THREE) pLiveThrees++;
                 }
                 if (movesByType.playerFives.has(moveStr)) continue;
 
                 if (pLiveFours >= 1 && pLiveThrees >= 1) movesByType.playerFourThrees.add(moveStr);
-                else if (pBlockedFours >= 2) movesByType.playerFourThrees.add(moveStr); // Approx FOUR_FOUR
+                else if (pBlockedFours >= 2) movesByType.playerFourThrees.add(moveStr);
                 else if (pLiveThrees >= 2) movesByType.playerThreeThrees.add(moveStr);
 
                 if (pLiveFours >= 1 && !movesByType.playerFourThrees.has(moveStr)) movesByType.playerFours.add(moveStr);
                 if (pLiveThrees >= 1 && !movesByType.playerThreeThrees.has(moveStr) && !movesByType.playerFourThrees.has(moveStr)) movesByType.playerThrees.add(moveStr);
 
-
-                // Check opponent's potential shapes if they play at (r,c) - for blocking these
                 let oLiveThrees = 0, oBlockedFours = 0, oLiveFours = 0;
                  for (let dirIdx = 0; dirIdx < 4; dirIdx++) {
                     const shape = this.shapeCache[oppIdx][dirIdx][r][c];
@@ -241,15 +285,15 @@ class Evaluate {
                 if (movesByType.opponentBlockFives.has(moveStr)) continue;
 
                 if (oLiveFours >= 1 && oLiveThrees >= 1) movesByType.opponentFourThrees.add(moveStr);
-                else if (oBlockedFours >= 2) movesByType.opponentFourThrees.add(moveStr); // Approx opp FOUR_FOUR
+                else if (oBlockedFours >= 2) movesByType.opponentFourThrees.add(moveStr);
                 else if (oLiveThrees >= 2) movesByType.opponentThreeThrees.add(moveStr);
 
                 if (oLiveFours >= 1 && !movesByType.opponentFourThrees.has(moveStr)) movesByType.opponentBlockFours.add(moveStr);
                 if (oLiveThrees >= 1 && !movesByType.opponentThreeThrees.has(moveStr) && !movesByType.opponentFourThrees.has(moveStr)) movesByType.opponentBlockThrees.add(moveStr);
 
-                // Fallback points based on player's score for that point
-                if (this.pointScores[pIdx][r][c] > SCORE_VALUES.BLOCK_TWO) { // Some threshold
-                    movesByType.fallbackPoints.push({ move: move, score: this.pointScores[pIdx][r][c] });
+                const currentPointScorePlayer = this.pointScores[pIdx] && this.pointScores[pIdx][r] ? this.pointScores[pIdx][r][c] : 0;
+                if (currentPointScorePlayer > SCORE_VALUES.BLOCK_TWO) {
+                    movesByType.fallbackPoints.push({ move: move, score: currentPointScorePlayer });
                 }
             }
         }
@@ -262,21 +306,21 @@ class Evaluate {
         if (movesByType.opponentBlockFives.size > 0) return parseMoves(movesByType.opponentBlockFives);
 
         let result = [];
-        if (onlyFour) { // VCF
+        if (onlyFour) {
             result.push(...parseMoves(movesByType.playerFours), ...parseMoves(movesByType.opponentBlockFours));
-        } else if (onlyThree) { // VCT
+        } else if (onlyThree) {
             result.push(...parseMoves(movesByType.playerFourThrees), ...parseMoves(movesByType.playerThreeThrees),
                         ...parseMoves(movesByType.playerThrees), ...parseMoves(movesByType.playerFours),
                         ...parseMoves(movesByType.opponentBlockFours), ...parseMoves(movesByType.opponentBlockThrees),
                         ...parseMoves(movesByType.opponentFourThrees), ...parseMoves(movesByType.opponentThreeThrees)
                         );
-        } else { // General search
+        } else {
             result.push(...parseMoves(movesByType.playerFourThrees), ...parseMoves(movesByType.playerFours),
                         ...parseMoves(movesByType.opponentBlockFours), ...parseMoves(movesByType.opponentFourThrees),
                         ...parseMoves(movesByType.playerThreeThrees), ...parseMoves(movesByType.opponentThreeThrees),
                         ...parseMoves(movesByType.playerThrees), ...parseMoves(movesByType.opponentBlockThrees)
                         );
-            if (result.length < 5) { // If not many critical threats, add some development moves
+            if (result.length < 5) {
                 movesByType.fallbackPoints.sort((a,b) => b.score - a.score);
                 result.push(...movesByType.fallbackPoints.map(fm => fm.move));
             }
@@ -284,7 +328,9 @@ class Evaluate {
 
         const uniqueMoveMap = new Map();
         for(const moveObj of result) {
-            uniqueMoveMap.set(`${moveObj.y}-${moveObj.x}`, moveObj);
+            if(moveObj && moveObj.y !== undefined && moveObj.x !== undefined) { // Ensure moveObj is valid
+               uniqueMoveMap.set(`${moveObj.y}-${moveObj.x}`, moveObj);
+            }
         }
         result = Array.from(uniqueMoveMap.values());
 
@@ -296,3 +342,4 @@ class Evaluate {
 if (typeof window !== 'undefined') {
     window.Evaluate = Evaluate;
 }
+console.log("DEBUG: End of evaluate.js script evaluation."); // DBG_LOAD_END_EVAL
