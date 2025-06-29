@@ -1,40 +1,182 @@
 // Gomoku AI Logic - Refactored for Negamax
 
+// --- Board Class (Encapsulates board state, Zobrist, history, evaluator) ---
+class Board {
+    constructor(size, playerBlackConst, playerWhiteConst, emptyValConst, existingCellsArray = null, currentPlayerFromState = null, existingHistory = null) {
+        this.size = size;
+        this.PLAYER_BLACK = playerBlackConst;
+        this.PLAYER_WHITE = playerWhiteConst;
+        this.EMPTY = emptyValConst;
+
+        this.cells = Array(size).fill(null).map(() => Array(size).fill(this.EMPTY));
+        this.history = [];
+        this.currentPlayer = currentPlayerFromState || this.PLAYER_BLACK;
+
+        if (!window.Zobrist) {
+            console.error("Zobrist class not found on window. Make sure zobrist.js is loaded.");
+            this.zobrist = { togglePiece: () => {}, getHash: () => BigInt(0), computeFullHash: () => {} }; // Dummy
+        } else {
+            this.zobrist = new Zobrist(this.size, this.PLAYER_BLACK, this.PLAYER_WHITE);
+        }
+
+        if (!window.Evaluate) {
+            console.error("Evaluate class not found on window. Make sure evaluate.js is loaded.");
+            this.evaluator = {
+                move: () => {}, undo: () => {}, evaluateBoard: () => 0,
+                getMoves: () => []
+            }; // Dummy
+        } else {
+            // Initialize evaluator AFTER cells might be populated if existingCellsArray is provided
+        }
+
+        if (existingCellsArray) {
+            for (let r_idx = 0; r_idx < size; r_idx++) {
+                for (let c_idx = 0; c_idx < size; c_idx++) {
+                    this.cells[r_idx][c_idx] = existingCellsArray[r_idx][c_idx];
+                }
+            }
+            this.zobrist.computeFullHash(this.cells, { EMPTY_VAL: this.EMPTY });
+            if (window.Evaluate) {
+                 this.evaluator = new Evaluate(this.size, this.PLAYER_BLACK, this.PLAYER_WHITE, this.EMPTY);
+                 for (let r_idx = 0; r_idx < this.size; r_idx++) {
+                    for (let c_idx = 0; c_idx < this.size; c_idx++) {
+                        this.evaluator.board[r_idx+1][c_idx+1] = this.cells[r_idx][c_idx];
+                    }
+                 }
+                 for (let r_idx = 0; r_idx < this.size; r_idx++) {
+                    for (let c_idx = 0; c_idx < this.size; c_idx++) {
+                        if (this.evaluator.board[r_idx + 1][c_idx + 1] === this.EMPTY) {
+                            this.evaluator._updateSinglePointScore(r_idx, c_idx, this.PLAYER_BLACK);
+                            this.evaluator._updateSinglePointScore(r_idx, c_idx, this.PLAYER_WHITE);
+                        } else {
+                            const pIdxBlack = this.evaluator.playerIndexMap[this.PLAYER_BLACK];
+                            const pIdxWhite = this.evaluator.playerIndexMap[this.PLAYER_WHITE];
+                            if (pIdxBlack !== undefined) this.evaluator.pointScores[pIdxBlack][r_idx][c_idx] = 0;
+                            if (pIdxWhite !== undefined) this.evaluator.pointScores[pIdxWhite][r_idx][c_idx] = 0;
+                        }
+                    }
+                }
+            }
+            if (existingHistory) {
+                this.history = JSON.parse(JSON.stringify(existingHistory));
+            }
+        } else {
+            if (window.Evaluate) {
+                 this.evaluator = new Evaluate(this.size, this.PLAYER_BLACK, this.PLAYER_WHITE, this.EMPTY);
+            }
+        }
+    }
+
+    put(r, c, player) {
+        const roleToPlay = player !== undefined ? player : this.currentPlayer;
+        if (r < 0 || r >= this.size || c < 0 || c >= this.size || this.cells[r][c] !== this.EMPTY) {
+            return false;
+        }
+        this.cells[r][c] = roleToPlay;
+        this.history.push({ r, c, player: roleToPlay });
+        this.zobrist.togglePiece(r, c, roleToPlay);
+        if (this.evaluator && typeof this.evaluator.move === 'function') {
+            this.evaluator.move(r, c, roleToPlay);
+        }
+        this.currentPlayer = (roleToPlay === this.PLAYER_BLACK) ? this.PLAYER_WHITE : this.PLAYER_BLACK;
+        return true;
+    }
+
+    undo() {
+        if (this.history.length === 0) return false;
+        const lastMove = this.history.pop();
+        const originalPlayerRole = lastMove.player;
+        this.cells[lastMove.r][lastMove.c] = this.EMPTY;
+        this.zobrist.togglePiece(lastMove.r, lastMove.c, originalPlayerRole);
+        if (this.evaluator && typeof this.evaluator.undo === 'function') {
+            this.evaluator.undo(lastMove.r, lastMove.c, originalPlayerRole);
+        }
+        this.currentPlayer = originalPlayerRole;
+        return true;
+    }
+
+    getHash() {
+        return this.zobrist.getHash();
+    }
+
+    getMoves(playerRole, currentSearchPly, onlyThree = false, onlyFour = false) {
+        if (this.evaluator && typeof this.evaluator.getMoves === 'function') {
+            return this.evaluator.getMoves(playerRole, currentSearchPly, onlyThree, onlyFour);
+        }
+        console.warn("Board.getMoves called but evaluator is not fully available. Returning basic moves.");
+        // Basic fallback if evaluator is dummy or getMoves is missing
+        let moves = [];
+        for (let r_idx = 0; r_idx < this.size; r_idx++) {
+            for (let c_idx = 0; c_idx < this.size; c_idx++) {
+                if (this.cells[r_idx][c_idx] === this.EMPTY) {
+                    moves.push({ y: r_idx, x: c_idx });
+                }
+            }
+        }
+        return moves;
+    }
+
+    evaluate(roleForPerspective) {
+        if (this.evaluator && typeof this.evaluator.evaluateBoard === 'function') {
+            return this.evaluator.evaluateBoard(roleForPerspective);
+        }
+        console.warn("Board.evaluate called but evaluator is not fully available. Returning 0.");
+        return 0;
+    }
+
+    deepCopy() {
+        const newBoardInst = new Board(
+            this.size,
+            this.PLAYER_BLACK,
+            this.PLAYER_WHITE,
+            this.EMPTY,
+            this.cells,
+            this.currentPlayer,
+            this.history
+        );
+        return newBoardInst;
+    }
+}
+// --- End Board Class ---
+
+
 // AI difficulty levels (maps to search depth and randomness config)
 const AI_DIFFICULTY_CONFIG = {
-    1: { depth: 2, name: "Novice", topN: 5, randomChance: 0.80 },    // 80% chance from top 5
-    2: { depth: 4, name: "Apprentice", topN: 3, randomChance: 0.50 }, // 50% chance from top 3
-    3: { depth: 6, name: "Adept", topN: 2, randomChance: 0.10 },      // 10% chance from top 2 (次优)
-    4: { depth: 8, name: "Expert", topN: 1, randomChance: 0 },       // Always best
-    5: { depth: 10, name: "Master", topN: 1, randomChance: 0 }       // Always best (depth 10-12, using 10)
+    1: { depth: 2, name: "Novice", topN: 5, randomChance: 0.80 },
+    2: { depth: 4, name: "Apprentice", topN: 3, randomChance: 0.50 },
+    3: { depth: 6, name: "Adept", topN: 2, randomChance: 0.10 },
+    4: { depth: 8, name: "Expert", topN: 1, randomChance: 0 },
+    5: { depth: 10, name: "Master", topN: 1, randomChance: 0 }
 };
 let currentAiDifficulty = 3; // Default to Adept
-let currentSearchDepth = AI_DIFFICULTY_CONFIG[currentAiDifficulty].depth;
+
+// --- Heuristics ---
+const MAX_REMAINING_DEPTH_FOR_HEURISTICS = AI_DIFFICULTY_CONFIG[5].depth;
+let killerMoves = Array(MAX_REMAINING_DEPTH_FOR_HEURISTICS).fill(null).map(() => [null, null]);
+let historyTable = {};
+
+function resetKillerMoves() {
+    killerMoves = Array(MAX_REMAINING_DEPTH_FOR_HEURISTICS).fill(null).map(() => [null, null]);
+}
+// --- End Heuristics ---
 
 // Transposition Table
 let transpositionTable = {};
 const TT_FLAG_EXACT = 0;
-const TT_FLAG_LOWERBOUND = 1; // Value is at least this score (fail-high)
-const TT_FLAG_UPPERBOUND = 2; // Value is at most this score (fail-low)
+const TT_FLAG_LOWERBOUND = 1;
+const TT_FLAG_UPPERBOUND = 2;
 
-// Attempt to initialize Zobrist hashing.
-// This relies on global constants (BOARD_SIZE, PLAYER_BLACK, etc.) being available.
-// If they are loaded by a script after zobrist.js but before ai.js, this should work.
-if (window.zobristUtils && typeof window.zobristUtils.initZobrist === 'function') {
-    if (!window.zobristUtils.initZobrist()) {
-        console.error("AI: Zobrist initialization failed. Transposition table will be ineffective.");
-    }
-} else {
-    console.error("AI: zobristUtils not available. Transposition table will be ineffective.");
+// Zobrist class is expected to be on window.Zobrist
+// Evaluate class is expected to be on window.Evaluate
+if (!window.Zobrist) {
+    console.error("AI: Zobrist class (window.Zobrist) not available. Hashing will fail.");
+}
+if (!window.Evaluate) {
+    console.error("AI: Evaluate class (window.Evaluate) not available. Evaluation and move gen will fail.");
 }
 
-
-// Placeholder, will be replaced by js/score.js
-const PATTERN_SCORES = {
+const PATTERN_SCORES = { // Legacy, might be used if Evaluate class fails.
     FIVE_IN_A_ROW: 100000,
-    FOUR_IN_A_ROW: 10000,
-    THREE_IN_A_ROW: 1000,
-    TWO_IN_A_ROW: 100,
 };
 
 // --- Helper Functions ---
@@ -42,317 +184,347 @@ function reverseRole(role) {
     return role === PLAYER_BLACK ? PLAYER_WHITE : PLAYER_BLACK;
 }
 
-// Heuristic move generation: only considers moves near existing pieces.
-function generateMoves(board) {
-    const moves = new Set(); // Use a Set to avoid duplicate moves
-    const occupiedCells = [];
-    let hasPieces = false;
-
-    for (let r = 0; r < BOARD_SIZE; r++) {
-        for (let c = 0; c < BOARD_SIZE; c++) {
-            if (board[r][c] !== EMPTY) {
-                hasPieces = true;
-                occupiedCells.push({ r, c });
-            }
-        }
-    }
-
-    if (!hasPieces) {
-        // Board is empty, suggest center move or a few strategic points
-        // For simplicity, just the center. If BOARD_SIZE is even, pick one of the 4 centers.
-        const centerR = Math.floor((BOARD_SIZE -1) / 2);
-        const centerC = Math.floor((BOARD_SIZE -1) / 2);
-        moves.add(`${centerR}-${centerC}`); // Store as string to manage in Set easily
-        // Add other center points if board size is even
-        if (BOARD_SIZE % 2 === 0) {
-            moves.add(`${centerR+1}-${centerC}`);
-            moves.add(`${centerR}-${centerC+1}`);
-            moves.add(`${centerR+1}-${centerC+1}`);
-        }
-
-    } else {
-        const vicinityRadius = 1; // Consider cells within 1-unit distance (Manhattan or Chebyshev)
-                                 // Let's use Chebyshev distance (a square around the piece)
-        occupiedCells.forEach(cell => {
-            for (let dr = -vicinityRadius; dr <= vicinityRadius; dr++) {
-                for (let dc = -vicinityRadius; dc <= vicinityRadius; dc++) {
-                    if (dr === 0 && dc === 0) continue; // Skip the piece itself
-
-                    const nr = cell.r + dr;
-                    const nc = cell.c + dc;
-
-                    if (isInBounds(nc, nr) && board[nr][nc] === EMPTY) { // isInBounds from utils.js
-                        moves.add(`${nr}-${nc}`);
-                    }
-                }
-            }
-        });
-    }
-
-    // Convert string coordinates back to objects
-    const uniqueMoves = [];
-    moves.forEach(mStr => {
-        const parts = mStr.split('-');
-        uniqueMoves.push({ y: parseInt(parts[0], 10), x: parseInt(parts[1], 10) });
-    });
-
-    // Fallback if no moves are generated (e.g., board is full but no win, or error in logic)
-    if (uniqueMoves.length === 0 && hasPieces) {
-        console.warn("Heuristic move generation resulted in no moves. Falling back to all empty cells.");
-        for (let r = 0; r < BOARD_SIZE; r++) {
-            for (let c = 0; c < BOARD_SIZE; c++) {
-                if (board[r][c] === EMPTY) {
-                    uniqueMoves.push({ y: r, x: c });
-                }
-            }
-        }
-    }
-
-    return uniqueMoves;
-}
-
-// Evaluation function to be replaced by score.js integration
-// This function is now a wrapper around the more sophisticated evaluation in score.js
-function evaluateBoard(board, playerForPerspective) {
-    if (window.scoreUtils && typeof window.scoreUtils.evaluateBoardScore === 'function') {
-        // The evaluateBoardScore from score.js should return score from perspective of 'playerForPerspective'
-        // Positive good for playerForPerspective, negative good for opponent.
-        return window.scoreUtils.evaluateBoardScore(board, playerForPerspective);
-    } else {
-        console.error("scoreUtils.evaluateBoardScore is not available. Falling back to basic evaluation.");
-        // Fallback to a very basic evaluation if score.js is not loaded (should not happen in production)
-        // This rudimentary check is NOT a substitute for the real evaluation.
-        for (let r = 0; r < BOARD_SIZE; r++) {
-            for (let c = 0; c < BOARD_SIZE; c++) {
-                if (board[r][c] !== EMPTY) {
-                    // Simplified win check (assumes WINNING_LENGTH and isInBounds are available)
-                    const isWin = (b, p, y, x) => {
-                        if (p === EMPTY) return false;
-                        const DIRS = [[0,1],[1,0],[1,1],[1,-1]];
-                        for(const [dr, dc] of DIRS) {
-                            let count = 1;
-                            for(let i=1;i<WINNING_LENGTH;i++) { if(isInBounds(y+dr*i,x+dc*i) && b[y+dr*i][x+dc*i]===p) count++; else break; }
-                            for(let i=1;i<WINNING_LENGTH;i++) { if(isInBounds(y-dr*i,x-dc*i) && b[y-dr*i][x-dc*i]===p) count++; else break; }
-                            if(count>=WINNING_LENGTH) return true;
-                        }
-                        return false;
-                    };
-                    if (isWin(board, board[r][c], r, c)) {
-                         return board[r][c] === playerForPerspective ? PATTERN_SCORES.FIVE_IN_A_ROW : -PATTERN_SCORES.FIVE_IN_A_ROW;
-                    }
-                }
-            }
-        }
-        return 0;
-    }
-}
-
-
 // --- Negamax Algorithm ---
-/**
- * Negamax search with Alpha-Beta Pruning. Operates on the provided board copy.
- * @param {Array<Array<number>>} board - The current game board state (should be a mutable copy).
- * @param {number} depth - Current search depth.
- * @param {number} alpha - Alpha value for pruning.
- * @param {number} beta - Beta value for pruning.
- * @param {number} role - The current player's role (PLAYER_BLACK or PLAYER_WHITE) for this node.
- * @param {number} aiPlayer - The AI's actual color (used for consistent evaluation perspective if needed by eval).
- * @returns {number} The score of the current board state for the 'role' player.
- */
-function negamax(board, depth, alpha, beta, role, aiPlayer) {
-    const originalAlpha = alpha; // Store original alpha for TT flag determination
+function negamax(boardInstance, remainingDepth, alpha, beta, role, aiPlayer) {
+    const originalAlpha = alpha;
+    const pieceHash = boardInstance.getHash();
+    const ttKey = `${pieceHash.toString()}-${role}`;
 
-    // --- Transposition Table Lookup ---
-    let hash = -1; // Default if Zobrist fails
-    if (window.zobristUtils && typeof window.zobristUtils.computeZobristHash === 'function') {
-        hash = window.zobristUtils.computeZobristHash(board, role);
-        const ttEntry = transpositionTable[hash];
-        if (ttEntry && ttEntry.depth >= depth) {
-            if (ttEntry.flag === TT_FLAG_EXACT) {
-                return ttEntry.score;
-            } else if (ttEntry.flag === TT_FLAG_LOWERBOUND) {
-                alpha = Math.max(alpha, ttEntry.score);
-            } else if (ttEntry.flag === TT_FLAG_UPPERBOUND) {
-                beta = Math.min(beta, ttEntry.score);
-            }
-            if (alpha >= beta) {
-                return ttEntry.score; // Or the bound that caused cutoff (alpha or beta)
-            }
+    const ttEntry = transpositionTable[ttKey];
+    let ttBestMove = null;
+
+    if (ttEntry && ttEntry.depth >= remainingDepth && ttEntry.role === role) {
+        if (ttEntry.bestMove) {
+            ttBestMove = ttEntry.bestMove;
         }
+        if (ttEntry.flag === TT_FLAG_EXACT) return ttEntry.score;
+        if (ttEntry.flag === TT_FLAG_LOWERBOUND) alpha = Math.max(alpha, ttEntry.score);
+        else if (ttEntry.flag === TT_FLAG_UPPERBOUND) beta = Math.min(beta, ttEntry.score);
+        if (alpha >= beta) return ttEntry.score;
     }
-    // --- End TT Lookup ---
 
-    if (depth === 0) {
-        const evalScore = evaluateBoard(board, role);
-        // Store leaf node evaluations if hash is valid
-        if (hash !== -1 && window.zobristUtils) { // Check zobristUtils to ensure it was available for hash
-             transpositionTable[hash] = { depth: 0, score: evalScore, flag: TT_FLAG_EXACT };
-        }
-        return evalScore;
+    if (remainingDepth === 0) {
+        return quiescenceSearch(boardInstance, alpha, beta, role, aiPlayer, MAX_QUIESCENCE_DEPTH);
     }
 
     let bestValue = -Infinity;
-    const generatedMoves = generateMoves(board);
+    const generatedMoves = boardInstance.getMoves(role, remainingDepth);
+    let bestMoveForThisNode = null;
 
-    // --- Move Ordering ---
-    const scoredMoves = [];
-    for (const move of generatedMoves) {
-        if (board[move.y][move.x] === EMPTY) {
-            board[move.y][move.x] = role; // Try the move
-            // Evaluate from the perspective of the current player (role)
-            // A higher score means this move is immediately better for 'role'
-            const score = evaluateBoard(board, role);
-            board[move.y][move.x] = EMPTY; // Undo the move
-            scoredMoves.push({ move: move, score: score });
+    let movesWithScores = [];
+    if (ttBestMove) {
+        let isValidTTMove = false;
+        for(const genMove of generatedMoves) {
+            if (genMove.x === ttBestMove.x && genMove.y === ttBestMove.y) {
+                isValidTTMove = true;
+                break;
+            }
+        }
+        if (isValidTTMove) {
+            movesWithScores.push({move: ttBestMove, orderScore: Infinity});
         } else {
-            // Should not happen if generateMoves is correct
-            console.warn("Move ordering: generated move was on an occupied cell", move);
+            ttBestMove = null;
         }
     }
-    // Sort moves by score in descending order (best moves first)
-    scoredMoves.sort((a, b) => b.score - a.score);
-    // --- End of Move Ordering ---
 
-    for (let i = 0; i < scoredMoves.length; i++) {
-        const move = scoredMoves[i].move; // Get the move object from sorted list
+    for (const move of generatedMoves) {
+        if (ttBestMove && move.x === ttBestMove.x && move.y === ttBestMove.y) {
+            continue;
+        }
+        let orderScore = 0;
+        // Killer Move Priority (only if remainingDepth is valid index)
+        if (remainingDepth > 0 && remainingDepth < MAX_REMAINING_DEPTH_FOR_HEURISTICS) {
+            if ((killerMoves[remainingDepth][0] && killerMoves[remainingDepth][0].x === move.x && killerMoves[remainingDepth][0].y === move.y) ||
+                (killerMoves[remainingDepth][1] && killerMoves[remainingDepth][1].x === move.x && killerMoves[remainingDepth][1].y === move.y)) {
+                orderScore += 100000;
+            }
+        }
+        const historyKey = `${role}-${move.x}-${move.y}`;
+        orderScore += historyTable[historyKey] || 0;
+        // Skipping shallow eval for ordering here, assuming getMoves from evaluator is already somewhat prioritized
+        movesWithScores.push({ move: move, orderScore: orderScore });
+    }
 
-        // Directly manipulate the 'board' copy passed to this function
-        // No need to check for EMPTY again if generateMoves and ordering logic are correct
-        board[move.y][move.x] = role; // Make move
+    movesWithScores.sort((a, b) => b.orderScore - a.orderScore);
 
-        let val = -negamax(board, depth - 1, -beta, -alpha, reverseRole(role), aiPlayer);
+    let isFirstPvsMove = true;
 
-        board[move.y][move.x] = EMPTY; // Undo move
+    for (let i = 0; i < movesWithScores.length; i++) {
+        const move = movesWithScores[i].move;
+
+        if (!boardInstance.put(move.y, move.x, role)) {
+            continue;
+        }
+
+        let val;
+        if (isFirstPvsMove) {
+            isFirstPvsMove = false;
+            val = -negamax(boardInstance, remainingDepth - 1, -beta, -alpha, boardInstance.currentPlayer, aiPlayer);
+        } else {
+            val = -negamax(boardInstance, remainingDepth - 1, -alpha - 1, -alpha, boardInstance.currentPlayer, aiPlayer);
+            if (val > alpha && val < beta) {
+                val = -negamax(boardInstance, remainingDepth - 1, -beta, -val, boardInstance.currentPlayer, aiPlayer);
+            }
+        }
+        boardInstance.undo();
 
         if (val > bestValue) {
             bestValue = val;
+            bestMoveForThisNode = move;
         }
         if (bestValue > alpha) {
             alpha = bestValue;
         }
         if (alpha >= beta) {
-            break; // Beta cut-off
+            if (remainingDepth > 0 && remainingDepth < MAX_REMAINING_DEPTH_FOR_HEURISTICS) {
+                 if (!killerMoves[remainingDepth][0] || (killerMoves[remainingDepth][0].x !== move.x || killerMoves[remainingDepth][0].y !== move.y)) {
+                     if (!killerMoves[remainingDepth][1] || (killerMoves[remainingDepth][1].x !== move.x || killerMoves[remainingDepth][1].y !== move.y)) {
+                        killerMoves[remainingDepth][1] = killerMoves[remainingDepth][0];
+                        killerMoves[remainingDepth][0] = move;
+                     } else if (killerMoves[remainingDepth][0].x !== move.x || killerMoves[remainingDepth][0].y !== move.y) {
+                        killerMoves[remainingDepth][1] = killerMoves[remainingDepth][0];
+                        killerMoves[remainingDepth][0] = move;
+                     }
+                }
+            }
+            const historyKeyCutoff = `${role}-${move.x}-${move.y}`;
+            historyTable[historyKeyCutoff] = (historyTable[historyKeyCutoff] || 0) + (remainingDepth * remainingDepth);
+            break;
         }
     }
 
-    // --- Store in Transposition Table ---
-    if (hash !== -1 && window.zobristUtils) { // Check zobristUtils to ensure hash is valid
+    if (pieceHash !== BigInt(0)) {
         let flag;
-        if (bestValue <= originalAlpha) { // Failed low (actual score might be even lower)
-            flag = TT_FLAG_UPPERBOUND;
-        } else if (bestValue >= beta) { // Failed high (actual score might be even higher)
-            flag = TT_FLAG_LOWERBOUND;
-        } else { // Score is exact within the original alpha-beta window
-            flag = TT_FLAG_EXACT;
-        }
-        transpositionTable[hash] = { depth: depth, score: bestValue, flag: flag };
+        if (bestValue <= originalAlpha) flag = TT_FLAG_UPPERBOUND;
+        else if (bestValue >= beta) flag = TT_FLAG_LOWERBOUND;
+        else flag = TT_FLAG_EXACT;
+        transpositionTable[ttKey] = {
+            depth: remainingDepth,
+            score: bestValue,
+            flag: flag,
+            bestMove: bestMoveForThisNode,
+            role: role
+        };
     }
-    // --- End TT Store ---
-
     return bestValue;
 }
 
+const MAX_QUIESCENCE_DEPTH = 2;
+function quiescenceSearch(boardInstance, alpha, beta, role, aiPlayer, quiesceDepth) {
+    const pieceHash = boardInstance.getHash();
+    const ttKey = `${pieceHash.toString()}-${role}`;
+
+    const ttEntry = transpositionTable[ttKey];
+    if (ttEntry && ttEntry.role === role && ttEntry.depth >= quiesceDepth ) {
+        if (ttEntry.flag === TT_FLAG_EXACT) return ttEntry.score;
+    }
+
+    let standPatScore = boardInstance.evaluate(role);
+
+    if (quiesceDepth === 0) {
+        return standPatScore;
+    }
+    if (standPatScore >= beta) {
+        return beta;
+    }
+    if (standPatScore > alpha) {
+        alpha = standPatScore;
+    }
+
+    const forcingMoves = boardInstance.getMoves(role, quiesceDepth, true, true);
+
+    for (const move of forcingMoves) {
+        if (!boardInstance.put(move.y, move.x, role)) continue;
+        let score = -quiescenceSearch(boardInstance, -beta, -alpha, boardInstance.currentPlayer, aiPlayer, quiesceDepth - 1);
+        boardInstance.undo();
+
+        if (score >= beta) {
+            return beta;
+        }
+        if (score > alpha) {
+            alpha = score;
+        }
+    }
+    return alpha;
+}
 
 // --- Main AI Function ---
-function aiMakeMove(initialBoard) { // initialBoard is from gameApi.getBoard() which is a deep copy
+function aiMakeMove(initialBoardCells) {
     return new Promise((resolve, reject) => {
-        // Determine AI's role from the game state if not fixed.
-        // For now, assuming AI is always the current player when this is called.
-        // This might need adjustment if gameApi.getCurrentPlayer() changes during AI's turn by other means.
+        resetKillerMoves();
+
+        if (!openingBookInitialized) {
+            initializeOpeningBookExamples();
+        }
+
         const aiPlayerRole = window.gameApi.getCurrentPlayer();
-        if (!aiPlayerRole || (aiPlayerRole !== PLAYER_BLACK && aiPlayerRole !== PLAYER_WHITE)) {
+        if (typeof BOARD_SIZE === 'undefined' || typeof PLAYER_BLACK === 'undefined' ||
+            typeof PLAYER_WHITE === 'undefined' || typeof EMPTY === 'undefined') {
+            console.error("Global constants (BOARD_SIZE, PLAYER_BLACK, etc.) not defined for Board constructor.");
+            reject(new Error("Missing global constants for AI Board."));
+            return;
+        }
+        const rootBoard = new Board(BOARD_SIZE, PLAYER_BLACK, PLAYER_WHITE, EMPTY, initialBoardCells, aiPlayerRole);
+
+        if (!aiPlayerRole || (aiPlayerRole !== rootBoard.PLAYER_BLACK && aiPlayerRole !== rootBoard.PLAYER_WHITE)) {
             console.error("aiMakeMove: Could not determine a valid AI player role.", aiPlayerRole);
             reject(new Error("Invalid AI player role."));
             return;
         }
+        rootBoard.currentPlayer = aiPlayerRole;
 
-        console.log(`AI (Player ${aiPlayerRole}) is thinking with depth ${currentSearchDepth}...`);
-
-        const rootMoves = generateMoves(initialBoard);
-        if (rootMoves.length === 0) {
-            console.log("AI: No possible moves.");
-            resolve(null);
-            return;
-        }
-
-        let allScoredRootMoves = [];
-        let alpha = -Infinity;
-        let beta = Infinity;
-
-        // Evaluate all root moves
-        for (let i = 0; i < rootMoves.length; i++) {
-            const move = rootMoves[i];
-            const boardCopy = window.deepCopyBoard ? window.deepCopyBoard(initialBoard) : JSON.parse(JSON.stringify(initialBoard));
-
-            if (boardCopy[move.y][move.x] === EMPTY) {
-                boardCopy[move.y][move.x] = aiPlayerRole;
-                let score = -negamax(boardCopy, currentSearchDepth - 1, -beta, -alpha, reverseRole(aiPlayerRole), aiPlayerRole);
-                allScoredRootMoves.push({ move: move, score: score });
-
-                // Update alpha for the root, as negamax calls might have improved it.
-                // This helps subsequent negamax calls for other root moves be more efficient.
-                if (score > alpha) {
-                    alpha = score;
+        if (aiConfig.openingBookEnabled && window.openingBook && typeof window.openingBook.getOpeningMove === 'function') {
+            const currentBoardHashStr = rootBoard.getHash().toString(); // Hash before any AI moves
+            const bookMove = window.openingBook.getOpeningMove(currentBoardHashStr);
+            if (bookMove) {
+                if (rootBoard.cells[bookMove.y][bookMove.x] === rootBoard.EMPTY) {
+                    console.log(`AI: Using opening book move: (${bookMove.x}, ${bookMove.y}) for hash ${currentBoardHashStr}`);
+                    resolve(bookMove);
+                    return;
+                } else {
+                    console.warn("AI: Opening book suggested an invalid (occupied) move. Proceeding with search.", bookMove);
                 }
             }
         }
 
-        // Sort all evaluated root moves by score in descending order
-        allScoredRootMoves.sort((a, b) => b.score - a.score);
+        const maxDepthForDifficulty = AI_DIFFICULTY_CONFIG[currentAiDifficulty].depth;
+        console.log(`AI (Lvl ${currentAiDifficulty}-${AI_DIFFICULTY_CONFIG[currentAiDifficulty].name}) starting iterative deepening up to depth ${maxDepthForDifficulty}...`);
 
-        if (allScoredRootMoves.length === 0) {
-             // Fallback if something went wrong and no moves were scored (e.g. all were invalid somehow)
-            if (rootMoves.length > 0) {
-                console.warn("AI: No valid moves were scored, picking first generated move.");
-                resolve(rootMoves[0]);
-            } else { // Should be caught by earlier check
-                reject(new Error("AI has no moves and could not make a decision."));
-            }
+        const startTime = Date.now();
+        const TIME_LIMIT_PER_MOVE_MS = 5000;
+
+        let allScoredMovesFromCompletedIteration = [];
+
+        const rootMovesGenerated = rootBoard.getMoves(aiPlayerRole, 0);
+        if (rootMovesGenerated.length === 0) {
+            console.log("AI: No possible moves at root.");
+            resolve(null);
             return;
         }
 
-        let finalMove;
-        const difficultySetting = AI_DIFFICULTY_CONFIG[currentAiDifficulty];
-        const randomFactor = Math.random();
+        for (let iterativePlyDepth = 1; iterativePlyDepth <= maxDepthForDifficulty; iterativePlyDepth++) {
+            const elapsedTime = Date.now() - startTime;
+            if (elapsedTime > TIME_LIMIT_PER_MOVE_MS && iterativePlyDepth > 1) {
+                console.log(`AI: Time limit (${TIME_LIMIT_PER_MOVE_MS}ms) reached before starting total ply depth ${iterativePlyDepth}. Using results from ${iterativePlyDepth - 1} plies.`);
+                break;
+            }
+            console.log(`AI: Iterative deepening: Starting search for total ply depth ${iterativePlyDepth}. Time elapsed: ${elapsedTime}ms.`);
 
-        if (randomFactor < difficultySetting.randomChance && allScoredRootMoves.length > 0) {
-            // Select randomly from top N moves
-            const topNCount = Math.min(difficultySetting.topN, allScoredRootMoves.length);
-            const selectedIndex = Math.floor(Math.random() * topNCount);
-            finalMove = allScoredRootMoves[selectedIndex].move;
-            console.log(`AI (Lvl ${currentAiDifficulty}-${difficultySetting.name}) randomly chose from top ${topNCount}. Move: (${finalMove.x}, ${finalMove.y}), score: ${allScoredRootMoves[selectedIndex].score}`);
-        } else {
-            // Select the best move
-            finalMove = allScoredRootMoves[0].move;
-            console.log(`AI (Lvl ${currentAiDifficulty}-${difficultySetting.name}) chose best move: (${finalMove.x}, ${finalMove.y}), score: ${allScoredRootMoves[0].score}`);
+            let currentIterationScoredMoves = [];
+            let alpha = -Infinity;
+            let beta = Infinity;
+
+            for (const rootMove of rootMovesGenerated) {
+                const boardCopy = rootBoard.deepCopy();
+
+                if (boardCopy.put(rootMove.y, rootMove.x, aiPlayerRole)) {
+                    let score = -negamax(boardCopy, iterativePlyDepth - 1, -beta, -alpha, boardCopy.currentPlayer, aiPlayerRole);
+                    currentIterationScoredMoves.push({ move: rootMove, score: score });
+
+                    if (score > alpha) {
+                        alpha = score;
+                    }
+                } else {
+                    console.warn("aiMakeMove: boardCopy.put failed for a root move.", rootMove);
+                }
+
+                if ((Date.now() - startTime) > TIME_LIMIT_PER_MOVE_MS && iterativePlyDepth > 1) {
+                    console.log(`AI: Time limit reached during total ply depth ${iterativePlyDepth} evaluation of root moves. Will use prior depth results if available.`);
+                    break;
+                }
+            }
+
+            const currentIterationTime = Date.now() - startTime;
+            if (currentIterationTime > TIME_LIMIT_PER_MOVE_MS && iterativePlyDepth < maxDepthForDifficulty && iterativePlyDepth > 1) {
+                 console.log(`AI: Total ply depth ${iterativePlyDepth} did not complete fully within time limit. Using results from ${iterativePlyDepth - 1} plies.`);
+                 break;
+            }
+
+            if (currentIterationScoredMoves.length > 0) {
+                currentIterationScoredMoves.sort((a, b) => b.score - a.score);
+                allScoredMovesFromCompletedIteration = currentIterationScoredMoves;
+                const currentBest = allScoredMovesFromCompletedIteration[0];
+                 console.log(`AI: Total ply depth ${iterativePlyDepth} complete. Best move: (${currentBest.move.x}, ${currentBest.move.y}), Score: ${currentBest.score}. Time: ${currentIterationTime}ms`);
+            } else if (iterativePlyDepth === 1 && rootMovesGenerated.length > 0) {
+                 console.warn(`AI: Total ply depth 1 found no scorable moves. This is unusual. Fallback will be used.`);
+            }
+
+            if (allScoredMovesFromCompletedIteration.length > 0 &&
+                allScoredMovesFromCompletedIteration[0].score >= SCORE_VALUES.FIVE / 2) {
+                console.log(`AI: Decisive score found at total ply depth ${iterativePlyDepth}. Stopping deepening.`);
+                break;
+            }
         }
 
-        resolve(finalMove);
+        let finalMoveToResolve;
+        if (allScoredMovesFromCompletedIteration.length > 0) {
+            const difficultySetting = AI_DIFFICULTY_CONFIG[currentAiDifficulty];
+            const randomFactor = Math.random();
+            if (randomFactor < difficultySetting.randomChance) {
+                const topNCount = Math.min(difficultySetting.topN, allScoredMovesFromCompletedIteration.length);
+                const selectedIndex = Math.floor(Math.random() * topNCount);
+                finalMoveToResolve = allScoredMovesFromCompletedIteration[selectedIndex].move;
+                console.log(`AI: Final choice (Lvl ${currentAiDifficulty}-${difficultySetting.name}) randomly from top ${topNCount}. Move: (${finalMoveToResolve.x}, ${finalMoveToResolve.y}), score: ${allScoredMovesFromCompletedIteration[selectedIndex].score}`);
+            } else {
+                finalMoveToResolve = allScoredMovesFromCompletedIteration[0].move;
+                console.log(`AI: Final choice (Lvl ${currentAiDifficulty}-${difficultySetting.name}) is best. Move: (${finalMoveToResolve.x}, ${finalMoveToResolve.y}), score: ${allScoredMovesFromCompletedIteration[0].score}`);
+            }
+        } else if (rootMovesGenerated.length > 0) {
+            console.warn("AI: Iterative deepening yielded no scorable moves. Picking first generated move as fallback.");
+            finalMoveToResolve = rootMovesGenerated[0];
+        } else {
+            console.error("AI: No moves available at all.");
+            reject(new Error("AI has no moves and could not make a decision."));
+            return;
+        }
+
+        console.log(`AI: Total processing time: ${Date.now() - startTime}ms`);
+        resolve(finalMoveToResolve);
     });
 }
-
 
 function setAiDifficulty(level) {
     if (AI_DIFFICULTY_CONFIG[level]) {
         currentAiDifficulty = level;
-        currentSearchDepth = AI_DIFFICULTY_CONFIG[level].depth;
-        console.log(`AI difficulty set to Level ${level} (${AI_DIFFICULTY_CONFIG[level].name}), search depth ${currentSearchDepth}.`);
+        console.log(`AI difficulty set to Level ${level} (${AI_DIFFICULTY_CONFIG[level].name}), Max search depth ${AI_DIFFICULTY_CONFIG[level].depth}.`);
     } else {
         console.error(`Invalid AI difficulty level: ${level}`);
     }
 }
 
-console.log("ai.js (refactored with Negamax - corrected board handling) loaded.");
+console.log("ai.js (refactored with Board class, Evaluate integration) loaded.");
 
 window.aiApi = {
     aiMakeMove: aiMakeMove,
     setAiDifficulty: setAiDifficulty,
-    getPatternScores: () => { return {...PATTERN_SCORES}; },
+    getPatternScores: () => { return {}; }, // Return empty or actual Evaluate.SCORE_VALUES
 };
 
 // Assumed global constants/functions (should be loaded via utils.js or similar):
 // PLAYER_BLACK, PLAYER_WHITE, EMPTY, BOARD_SIZE, WINNING_LENGTH
-// isInBounds(x, y)
-// deepCopyBoard(board) - from utils.js, used in aiMakeMove for safety.
-// If deepCopyBoard is not available, a simple JSON.parse(JSON.stringify(board)) is used as a fallback.
-// gameApi.getCurrentPlayer() - used to determine AI's role.
+// isInBounds(x, y) // Used by old generateMoves if active, but Board.getMoves should be primary
+// gameApi.getCurrentPlayer()
+// window.Evaluate (from evaluate.js)
+// window.Zobrist (from zobrist.js)
+// window.shapeUtils (from shape.js)
+
+// Global aiConfig (placeholder, ideally passed or properly scoped)
+const aiConfig = {
+    pointsLimit: 20,
+    openingBookEnabled: true,
+};
+
+let openingBookInitialized = false;
+function initializeOpeningBookExamples() {
+    if (!openingBookInitialized && window.openingBook && typeof window.openingBook._populateExampleOpening === 'function' &&
+        window.Board && typeof BOARD_SIZE !== 'undefined' &&
+        typeof PLAYER_BLACK !== 'undefined' && typeof PLAYER_WHITE !== 'undefined' && typeof EMPTY !== 'undefined') {
+        try {
+            window.openingBook._populateExampleOpening(BOARD_SIZE, PLAYER_BLACK, PLAYER_WHITE, EMPTY);
+            openingBookInitialized = true;
+            console.log("AI: Example opening book populated.");
+        } catch (e) {
+            console.error("AI: Error populating example opening book:", e);
+        }
+    }
+}

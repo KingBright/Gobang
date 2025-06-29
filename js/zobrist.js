@@ -1,105 +1,116 @@
-// Gomoku Zobrist Hashing Logic
+// Gomoku Zobrist Hashing Logic - Refactored to Class with BigInt and Incremental Updates
 
-// These will be populated by initZobrist once global constants are available
-let zobristTable = [];
-let zobristTurnKeys = []; // For hashing whose turn it is
-
-// Mapping from actual player values (PLAYER_BLACK, PLAYER_WHITE) to array indices (0, 1)
-const ZOBRIST_PLAYER_INDICES = {};
-const ZOBRIST_INDEX_TO_PLAYER = {};
-
-
-/**
- * Initializes the Zobrist hash table with random numbers.
- * Must be called once after global constants (BOARD_SIZE, PLAYER_BLACK, PLAYER_WHITE) are defined.
- */
-function initZobrist() {
-    if (typeof BOARD_SIZE === 'undefined' ||
-        typeof PLAYER_BLACK === 'undefined' ||
-        typeof PLAYER_WHITE === 'undefined' ||
-        typeof EMPTY === 'undefined') {
-        console.error("Zobrist init failed: Critical global constants (BOARD_SIZE, PLAYER_BLACK, PLAYER_WHITE, EMPTY) are not defined.");
-        return false; // Indicate failure
-    }
-
-    // Check if already initialized to prevent re-initialization if called multiple times
-    if (zobristTable.length > 0) {
-        // console.log("Zobrist already initialized.");
-        return true;
-    }
-
-    ZOBRIST_PLAYER_INDICES[PLAYER_BLACK] = 0;
-    ZOBRIST_PLAYER_INDICES[PLAYER_WHITE] = 1;
-    ZOBRIST_INDEX_TO_PLAYER[0] = PLAYER_BLACK;
-    ZOBRIST_INDEX_TO_PLAYER[1] = PLAYER_WHITE;
-
-    const NUM_PIECE_TYPES_FOR_HASH = 2; // Black, White (EMPTY is not hashed by piece type)
-
-    zobristTable = Array(BOARD_SIZE);
-    for (let i = 0; i < BOARD_SIZE; i++) {
-        zobristTable[i] = Array(BOARD_SIZE);
-        for (let j = 0; j < BOARD_SIZE; j++) {
-            zobristTable[i][j] = Array(NUM_PIECE_TYPES_FOR_HASH);
-            for (let k = 0; k < NUM_PIECE_TYPES_FOR_HASH; k++) {
-                // Generate a random 32-bit integer (JavaScript numbers are floats, but bitwise ops treat them as 32-bit)
-                zobristTable[i][j][k] = Math.floor(Math.random() * Math.pow(2, 32));
-            }
+class Zobrist {
+    constructor(size, playerBlackConstant, playerWhiteConstant) {
+        if (typeof size === 'undefined' ||
+            typeof playerBlackConstant === 'undefined' ||
+            typeof playerWhiteConstant === 'undefined') {
+            console.error("Zobrist constructor failed: size or player constants not provided.");
+            this.size = 0;
+            this.zobristTable = [];
+            this.hash = BigInt(0);
+            this.PLAYER_MAP = {};
+            return;
         }
+
+        this.size = size;
+        this.PLAYER_MAP = {
+            [playerBlackConstant]: 0, // Map actual player value to index 0
+            [playerWhiteConstant]: 1  // Map actual player value to index 1
+        };
+        // For roles that are not playerBlack or playerWhite (e.g. EMPTY), they won't be in PLAYER_MAP
+        // and thus won't be part of zobristTable piece types, which is correct.
+
+        this.zobristTable = this._initializeZobristTable(size);
+        this.hash = BigInt(0); // Initial hash for an empty board
+        // Note: playerTurn hashing is removed from this class.
+        // It will be handled by the TT key composition if needed, or by storing role in TT entry.
+        console.log("Zobrist instance created and table initialized.");
     }
 
-    // Zobrist keys for player turn
-    zobristTurnKeys[ZOBRIST_PLAYER_INDICES[PLAYER_BLACK]] = Math.floor(Math.random() * Math.pow(2, 32));
-    zobristTurnKeys[ZOBRIST_PLAYER_INDICES[PLAYER_WHITE]] = Math.floor(Math.random() * Math.pow(2, 32));
+    _initializeZobristTable(size) {
+        let table = [];
+        const NUM_PIECE_TYPES_FOR_HASH = 2; // Black, White
 
-    console.log("Zobrist table initialized successfully.");
-    return true; // Indicate success
-}
-
-/**
- * Computes the Zobrist hash for a given board state and player turn.
- * @param {Array<Array<number>>} board - The game board.
- * @param {number} playerTurn - The player whose turn it is.
- * @returns {number} The Zobrist hash value (32-bit integer).
- */
-function computeZobristHash(board, playerTurn) {
-    if (zobristTable.length === 0) {
-        console.warn("Zobrist table not initialized. Attempting to initialize now.");
-        if (!initZobrist()) {
-            console.error("Failed to compute Zobrist hash: table initialization failed.");
-            return 0; // Error or default hash
-        }
-    }
-
-    const playerTurnIndex = ZOBRIST_PLAYER_INDICES[playerTurn];
-    if (typeof playerTurnIndex === 'undefined') {
-        console.error("Invalid playerTurn for Zobrist hash computation:", playerTurn);
-        return 0; // Error or default hash
-    }
-
-    let hash = 0;
-    for (let r = 0; r < BOARD_SIZE; r++) {
-        for (let c = 0; c < BOARD_SIZE; c++) {
-            const piece = board[r][c];
-            if (piece !== EMPTY) {
-                const pieceTypeIndex = ZOBRIST_PLAYER_INDICES[piece];
-                if (typeof pieceTypeIndex !== 'undefined') {
-                    hash ^= zobristTable[r][c][pieceTypeIndex];
-                } else {
-                    // Should not happen if board contains only valid player pieces or EMPTY
-                    console.warn(`Unknown piece type ${piece} at (${r},${c}) during Zobrist hash computation.`);
+        for (let i = 0; i < size; i++) {
+            table[i] = [];
+            for (let j = 0; j < size; j++) {
+                table[i][j] = Array(NUM_PIECE_TYPES_FOR_HASH);
+                for (let k = 0; k < NUM_PIECE_TYPES_FOR_HASH; k++) {
+                    // Generate a random 64-bit BigInt
+                    let randomBytes = new Uint8Array(8); // 8 bytes = 64 bits
+                    crypto.getRandomValues(randomBytes);
+                    let bigIntValue = BigInt(0);
+                    for (let byte of randomBytes) {
+                        bigIntValue = (bigIntValue << BigInt(8)) | BigInt(byte);
+                    }
+                    table[i][j][k] = bigIntValue;
                 }
             }
         }
+        return table;
     }
-    hash ^= zobristTurnKeys[playerTurnIndex];
-    return hash;
+
+    // Removed randomBitString as crypto.getRandomValues is more robust for BigInt generation
+
+    /**
+     * Updates the hash by XORing the piece's Zobrist key.
+     * Call this when a piece is added or removed.
+     * @param {number} x - The row index.
+     * @param {number} y - The column index.
+     * @param {number} playerRole - The role of the piece (e.g., PLAYER_BLACK, PLAYER_WHITE).
+     */
+    togglePiece(x, y, playerRole) {
+        if (x < 0 || x >= this.size || y < 0 || y >= this.size) {
+            console.error("Zobrist togglePiece: coordinates out of bounds.", x, y);
+            return;
+        }
+        const pieceTypeIndex = this.PLAYER_MAP[playerRole];
+        if (typeof pieceTypeIndex !== 'undefined') {
+            this.hash ^= this.zobristTable[x][y][pieceTypeIndex];
+        } else {
+            // This is expected if role is EMPTY or an invalid playerRole
+            // console.warn(`Zobrist togglePiece: Unknown playerRole ${playerRole} at ${x},${y}. No hash change.`);
+        }
+    }
+
+    /**
+     * Gets the current Zobrist hash value for the board state.
+     * @returns {BigInt} The Zobrist hash.
+     */
+    getHash() {
+        return this.hash;
+    }
+
+    /**
+     * Calculates the hash from scratch for a given board.
+     * Useful for initialization or verification, but togglePiece is used for updates.
+     * @param {Array<Array<number>>} boardArray - The 2D array representing the board.
+     * @param {object} playerConstants - Object like { EMPTY_VAL, PLAYER_BLACK_VAL, PLAYER_WHITE_VAL }
+     */
+    computeFullHash(boardArray, playerConstants) {
+        this.hash = BigInt(0);
+        for (let r = 0; r < this.size; r++) {
+            for (let c = 0; c < this.size; c++) {
+                const piece = boardArray[r][c];
+                if (piece !== playerConstants.EMPTY_VAL) { // Only hash actual pieces
+                    const pieceTypeIndex = this.PLAYER_MAP[piece];
+                    if (typeof pieceTypeIndex !== 'undefined') {
+                         this.hash ^= this.zobristTable[r][c][pieceTypeIndex];
+                    }
+                }
+            }
+        }
+        return this.hash;
+    }
 }
 
-// Expose utility if loaded globally
+// Expose the class if this script is loaded globally
+// In a module system, this would be `export default Zobrist;`
 if (typeof window !== 'undefined') {
-    window.zobristUtils = {
-        initZobrist: initZobrist,
-        computeZobristHash: computeZobristHash
-        // No need to expose the table itself generally
-    };
+    window.Zobrist = Zobrist;
+    // Remove old global utils if they conflict
+    if (window.zobristUtils) {
+        delete window.zobristUtils;
+    }
 }
