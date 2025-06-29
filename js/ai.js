@@ -5,14 +5,14 @@ const AI_DIFFICULTY_PROFILES = {
         name: "Novice",
         searchDepth: 2, // Increased from 1. ai.md recommends 2-3
         heuristicLevel: 'novice',
-        randomness: 0.5,
+        randomness: 0, // Disabled randomness
         randomTopN: 4
     },
     2: { // Apprentice
         name: "Apprentice",
         searchDepth: 2, // Kept at 2. ai.md recommends 3-4. Relying on heuristic changes from Step 4.
         heuristicLevel: 'apprentice',
-        randomness: 0.25,
+        randomness: 0, // Disabled randomness
         randomTopN: 3
     },
     3: { // Adept
@@ -161,6 +161,7 @@ function aiMakeMove(currentBoard) {
             type: 'findBestMove',
             board: currentBoard, // Worker should handle copying if it modifies the board.
             difficultyProfile: { // Send necessary parts of the profile
+                name: currentAiProfile.name, // Added name
                 searchDepth: currentAiProfile.searchDepth,
                 heuristicLevel: currentAiProfile.heuristicLevel,
                 randomness: currentAiProfile.randomness,
